@@ -11,7 +11,9 @@ async def health_check():
     service_urls = {
         "word_service": f"{settings.WORD_SERVICE_URL}/health",
         "excel_service": f"{settings.EXCEL_SERVICE_URL}/health",
-        "pdf_service": f"{settings.PDF_SERVICE_URL}/health"
+        "pdf_service": f"{settings.PDF_SERVICE_URL}/health",
+        "files_service": f"{settings.FILES_SERVICE_URL}/health",
+        "user_service": f"{settings.USER_SERVICE_URL}/health"
     }
 
     services_health = {}

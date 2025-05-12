@@ -13,11 +13,18 @@ mkdir -p ./service-excel/src/temp
 mkdir -p ./service-excel/src/templates
 mkdir -p ./service-pdf/src/temp
 mkdir -p ./service-pdf/src/templates
+mkdir -p ./service-files/src/temp
+mkdir -p ./service-files/src/templates
+mkdir -p ./service-user/src/temp
+mkdir -p ./service-user/src/templates
 
 chmod +x ./gateway/src/*.py
 chmod +x ./service-word/src/*.py
 chmod +x ./service-excel/src/*.py
 chmod +x ./service-pdf/src/*.py
+chmod +x ./service-files/src/*.py
+chmod +x ./service-user/src/*.py
+chmod +x ./init-db.sh
 
 if ! command -v docker &> /dev/null; then
     echo "Docker chưa được cài đặt. Vui lòng cài đặt Docker trước."
@@ -44,11 +51,15 @@ echo "- Gateway API: http://localhost:6000/docs"
 echo "- Word Service: http://localhost:6001/docs"
 echo "- Excel Service: http://localhost:6002/docs"
 echo "- PDF Service: http://localhost:6003/docs"
+echo "- Files Service: http://localhost:6004/docs"
+echo "- User Service: http://localhost:6005/docs"
+echo "- PostgreSQL: http://localhost:6006"
 echo "- RabbitMQ Management: http://localhost:15672"
-echo "  Username: admin"
-echo "  Password: adminpassword"
 echo "- MinIO Console: http://localhost:9001"
-echo "  Username: minioadmin"
-echo "  Password: minioadmin"
+echo "  Username: admin"
+echo "  Admin Email: admin@admin.com"
+echo "  Password: password123"
+echo "  MinIO Username: minioadmin"
+echo "  MinIO Password: minioadmin"
 echo ""
 echo "Để dừng hệ thống, sử dụng lệnh: ./stop.sh"

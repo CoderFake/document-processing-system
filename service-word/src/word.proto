@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package mscword;
+
+// Yêu cầu chuyển đổi tệp Word sang PDF
+message ConvertRequest {
+  string input_path = 1;  // Đường dẫn đến tệp Word đầu vào
+  string output_path = 2; // Đường dẫn để lưu tệp PDF đầu ra
+}
+
+// Kết quả chuyển đổi
+message ConvertReply {
+  bool success = 1;   // Trạng thái chuyển đổi, thành công hay thất bại
+  string message = 2; // Thông báo kết quả hoặc thông báo lỗi
+}
+
+// Dịch vụ chuyển đổi tài liệu Word
+service WordService {
+  // Chuyển đổi tệp Word sang PDF
+  rpc ConvertToPDF(ConvertRequest) returns (ConvertReply);
+}

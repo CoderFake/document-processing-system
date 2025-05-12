@@ -5,6 +5,7 @@ from minio import Minio
 from minio.error import S3Error
 from datetime import datetime, timedelta
 import uuid
+from minio.commonconfig import ComposeSource
 
 from core.config import settings
 from domain.exceptions import StorageException
@@ -29,6 +30,8 @@ class MinioClient:
 
             self._ensure_bucket_exists(settings.MINIO_FILES_BUCKET)
             self._ensure_bucket_exists(settings.MINIO_RAW_BUCKET)
+            self._ensure_bucket_exists(settings.MINIO_ARCHIVE_BUCKET)
+            self._ensure_bucket_exists(settings.MINIO_EXTRACTED_BUCKET)
         except Exception as e:
             raise StorageException(f"Không thể kết nối đến MinIO: {str(e)}")
 
@@ -263,3 +266,68 @@ class MinioClient:
             URL có chữ ký trước
         """
         return await self.get_presigned_url(object_name, settings.MINIO_FILES_BUCKET, expires)
+
+    async def put_object(self, bucket_name: str, object_name: str, data: bytes) -> None:
+        """Lưu đối tượng vào MinIO."""
+        try:
+            file_data = io.BytesIO(data)
+            file_size = len(data)
+
+            self.client.put_object(
+                bucket_name=bucket_name,
+                object_name=object_name,
+                data=file_data,
+                length=file_size
+            )
+        except S3Error as e:
+            raise StorageException(f"Lỗi khi lưu đối tượng {object_name}: {str(e)}")
+
+    async def get_object(self, bucket_name: str, object_name: str) -> Optional[bytes]:
+        """Lấy đối tượng từ MinIO."""
+        try:
+            response = self.client.get_object(
+                bucket_name=bucket_name,
+                object_name=object_name
+            )
+
+            content = response.read()
+            response.close()
+            response.release_conn()
+            return content
+        except S3Error as e:
+            raise StorageException(f"Lỗi khi lấy đối tượng {object_name}: {str(e)}")
+
+    async def list_objects(self, bucket_name: str, prefix: str = "", recursive: bool = False) -> List[Any]:
+        """Liệt kê các đối tượng trong bucket."""
+        try:
+            objects = self.client.list_objects(
+                bucket_name=bucket_name,
+                prefix=prefix,
+                recursive=recursive
+            )
+            return list(objects)
+        except S3Error as e:
+            raise StorageException(f"Lỗi khi liệt kê đối tượng trong bucket {bucket_name}: {str(e)}")
+
+    async def remove_object(self, bucket_name: str, object_name: str) -> bool:
+        """Xóa đối tượng từ MinIO."""
+        try:
+            self.client.remove_object(
+                bucket_name=bucket_name,
+                object_name=object_name
+            )
+            return True
+        except S3Error as e:
+            raise StorageException(f"Lỗi khi xóa đối tượng {object_name}: {str(e)}")
+
+    async def copy_object(self, source_bucket: str, source_object: str, target_bucket: str, target_object: str) -> bool:
+        """Sao chép đối tượng từ bucket này sang bucket khác."""
+        try:
+            self.client.copy_object(
+                target_bucket,
+                target_object,
+                f"{source_bucket}/{source_object}"
+            )
+            return True
+        except S3Error as e:
+            raise StorageException(f"Lỗi khi sao chép đối tượng {source_object}: {str(e)}")

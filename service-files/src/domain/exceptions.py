@@ -1,8 +1,8 @@
 class BaseServiceException(Exception):
     """
-    Lớp ngoại lệ cơ sở cho tất cả các ngoại lệ trong dịch vụ.
+    Exception cơ sở cho service.
     """
-    def __init__(self, message: str, code: str = "internal_error"):
+    def __init__(self, message: str, code: str):
         self.message = message
         self.code = code
         super().__init__(self.message)
@@ -17,6 +17,10 @@ class FileNotFoundException(BaseServiceException):
             code="file_not_found"
         )
 
+class ArchiveException(Exception):
+    """Exception cơ sở cho các lỗi liên quan đến tệp nén."""
+    pass
+
 class ArchiveNotFoundException(BaseServiceException):
     """
     Ngoại lệ khi không tìm thấy tệp nén.
@@ -25,16 +29,6 @@ class ArchiveNotFoundException(BaseServiceException):
         super().__init__(
             message=f"Không tìm thấy tệp nén với ID: {archive_id}",
             code="archive_not_found"
-        )
-
-class InvalidFileFormatException(BaseServiceException):
-    """
-    Ngoại lệ khi định dạng tệp không hợp lệ.
-    """
-    def __init__(self, filename: str, expected_formats: str):
-        super().__init__(
-            message=f"Định dạng tệp không hợp lệ: {filename}. Chỉ hỗ trợ {expected_formats}",
-            code="invalid_file_format"
         )
 
 class StorageException(BaseServiceException):
@@ -57,14 +51,24 @@ class CompressionException(BaseServiceException):
             code="compression_error"
         )
 
-class DecompressionException(BaseServiceException):
+class ExtractionException(BaseServiceException):
     """
     Ngoại lệ khi có lỗi giải nén tệp.
     """
     def __init__(self, message: str):
         super().__init__(
             message=f"Lỗi giải nén tệp: {message}",
-            code="decompression_error"
+            code="extraction_error"
+        )
+
+class UnsupportedFormatException(BaseServiceException):
+    """
+    Ngoại lệ khi định dạng tệp không được hỗ trợ.
+    """
+    def __init__(self, format: str):
+        super().__init__(
+            message=f"Định dạng tệp không được hỗ trợ: {format}",
+            code="unsupported_format"
         )
 
 class PasswordProtectedException(BaseServiceException):
@@ -73,17 +77,17 @@ class PasswordProtectedException(BaseServiceException):
     """
     def __init__(self):
         super().__init__(
-            message="Tệp nén được bảo vệ bằng mật khẩu. Vui lòng cung cấp mật khẩu để mở khóa.",
-            code="archive_password_protected"
+            message="Tệp nén được bảo vệ bằng mật khẩu",
+            code="password_protected"
         )
 
 class WrongPasswordException(BaseServiceException):
     """
-    Ngoại lệ khi mật khẩu cung cấp không đúng.
+    Ngoại lệ khi mật khẩu không đúng.
     """
     def __init__(self):
         super().__init__(
-            message="Mật khẩu không đúng.",
+            message="Mật khẩu không đúng",
             code="wrong_password"
         )
 
@@ -95,6 +99,26 @@ class CrackPasswordException(BaseServiceException):
         super().__init__(
             message=f"Không thể crack mật khẩu: {message}",
             code="crack_password_error"
+        )
+
+class InvalidArchiveException(BaseServiceException):
+    """
+    Ngoại lệ khi tệp nén không hợp lệ.
+    """
+    def __init__(self, message: str = "Tệp nén không hợp lệ"):
+        super().__init__(
+            message=message,
+            code="invalid_archive"
+        )
+
+class InvalidFileFormatException(BaseServiceException):
+    """
+    Ngoại lệ khi định dạng tệp không hợp lệ.
+    """
+    def __init__(self, filename: str, expected_formats: str):
+        super().__init__(
+            message=f"Định dạng tệp không hợp lệ: {filename}. Chỉ hỗ trợ {expected_formats}",
+            code="invalid_file_format"
         )
 
 class FileTooLargeException(BaseServiceException):
@@ -115,4 +139,14 @@ class CleanupException(BaseServiceException):
         super().__init__(
             message=f"Lỗi dọn dẹp tệp: {message}",
             code="cleanup_error"
+        )
+
+class ProcessingException(BaseServiceException):
+    """
+    Ngoại lệ khi có lỗi xử lý tệp.
+    """
+    def __init__(self, message: str):
+        super().__init__(
+            message=f"Lỗi xử lý tệp: {message}",
+            code="processing_error"
         )

@@ -8,6 +8,7 @@ import pandas as pd
 import zipfile
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+import logging
 
 from application.dto import CreateDocumentDTO, CreateTemplateDTO, TemplateDataDTO, WatermarkDTO, BatchProcessingDTO
 from domain.models import DocumentInfo, TemplateInfo, BatchProcessingInfo
@@ -17,13 +18,15 @@ from infrastructure.repository import DocumentRepository, TemplateRepository, Ba
 from infrastructure.minio_client import MinioClient
 from infrastructure.rabbitmq_client import RabbitMQClient
 from core.config import settings
+from utils import WordConverter
+from utils.watermark import WatermarkHelper
 
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm
-import comtypes.client
 
+logger = logging.getLogger(__name__)
 
 class DocumentService:
     """
@@ -129,15 +132,12 @@ class DocumentService:
             temp_pdf_path = os.path.join(settings.TEMP_DIR, pdf_filename)
 
             try:
-                word = comtypes.client.CreateObject('Word.Application')
-                word.Visible = False
-
-                doc = word.Documents.Open(temp_word_path)
-
-                doc.SaveAs(temp_pdf_path, FileFormat=17)  
-
-                doc.Close()
-                word.Quit()
+                # Sử dụng WordConverter thay vì comtypes
+                WordConverter.convert_to_pdf(
+                    input_path=temp_word_path,
+                    output_path=temp_pdf_path,
+                    method="libreoffice"  # hoặc "grpc" nếu gRPC service đã sẵn sàng
+                )
 
                 with open(temp_pdf_path, "rb") as f:
                     pdf_content = f.read()
@@ -185,63 +185,46 @@ class DocumentService:
             Dict chứa thông tin tài liệu đã thêm watermark
         """
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_word:
-                temp_word.write(content)
-                temp_word_path = temp_word.name
 
-            watermark_filename = os.path.splitext(original_filename)[0] + "_watermark.docx"
-            temp_result_path = os.path.join(settings.TEMP_DIR, watermark_filename)
+            output = WatermarkHelper.add_watermark(
+                input_data=content,
+                text=dto.text,
+                position=dto.position,
+                opacity=dto.opacity,
+                font_name=dto.font_name,
+                font_size=dto.font_size,
+                rotation=dto.rotation
+            )
+            
 
-            try:
-                doc = Document(temp_word_path)
-
-                for section in doc.sections:
-                    header = section.header
-                    paragraph = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
-
-                    paragraph.clear()
-
-                    run = paragraph.add_run(dto.text)
-                    run.font.size = Pt(40)
-                    run.font.color.rgb = RGBColor(192, 192, 192)  
-                    run.font.bold = True
-
-                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-                doc.save(temp_result_path)
-
-                with open(temp_result_path, "rb") as f:
-                    result_content = f.read()
-
-                os.unlink(temp_word_path)
-                os.unlink(temp_result_path)
-
-                document_info = DocumentInfo(
-                    title=os.path.splitext(original_filename)[0] + " (Watermark)",
-                    description=f"Tài liệu với watermark '{dto.text}'",
-                    original_filename=watermark_filename,
-                    file_size=len(result_content),
-                    file_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    storage_path="",  
-                    metadata={"watermark": dto.text, "original_filename": original_filename}
-                )
-
-                document_info = await self.document_repository.save(document_info, result_content)
-
-                return {
-                    "id": document_info.id,
-                    "filename": document_info.original_filename,
-                    "file_size": document_info.file_size
+            parts = os.path.splitext(original_filename)
+            watermarked_filename = f"{parts[0]}_watermarked{parts[1]}"
+    
+            document_info = DocumentInfo(
+                title=f"{parts[0]} (Watermarked)",
+                description=f"Tài liệu đã thêm watermark '{dto.text}'",
+                original_filename=watermarked_filename,
+                file_size=len(output),
+                file_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document" if watermarked_filename.endswith(".docx") else "application/msword",
+                storage_path="",
+                metadata={
+                    "watermark": dto.text,
+                    "watermark_position": dto.position,
+                    "original_file": original_filename
                 }
-            except Exception as e:
-                if os.path.exists(temp_word_path):
-                    os.unlink(temp_word_path)
-                if os.path.exists(temp_result_path):
-                    os.unlink(temp_result_path)
-
-                raise WatermarkException(f"Lỗi khi thêm watermark: {str(e)}")
+            )
+            
+            document_info = await self.document_repository.save(document_info, output)
+            
+            return {
+                "id": document_info.id,
+                "filename": document_info.original_filename,
+                "file_size": document_info.file_size
+            }
+            
         except Exception as e:
-            raise WatermarkException(str(e))
+            logger.error(f"Lỗi khi thêm watermark: {str(e)}")
+            raise
 
     async def process_document_async(self, document_id: str) -> None:
         """

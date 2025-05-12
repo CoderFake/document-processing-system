@@ -7,6 +7,7 @@ import tempfile
 import shutil
 from core.config import settings
 from utils.client import ServiceClient
+from api.v1.endpoints.auth import get_current_user
 
 router = APIRouter()
 excel_service = ServiceClient(settings.EXCEL_SERVICE_URL)
@@ -16,12 +17,13 @@ excel_service = ServiceClient(settings.EXCEL_SERVICE_URL)
 async def get_excel_documents(
         skip: int = 0,
         limit: int = 10,
-        search: Optional[str] = None
+        search: Optional[str] = None,
+        current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Lấy danh sách tài liệu Excel từ hệ thống.
     """
-    params = {"skip": skip, "limit": limit}
+    params = {"skip": skip, "limit": limit, "user_id": current_user["id"]}
     if search:
         params["search"] = search
 
@@ -34,7 +36,8 @@ async def upload_excel_document(
         file: UploadFile = File(...),
         title: Optional[str] = Form(None),
         description: Optional[str] = Form(None),
-        background_tasks: BackgroundTasks = None
+        background_tasks: BackgroundTasks = None,
+        current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Tải lên tài liệu Excel mới vào hệ thống.
@@ -45,7 +48,11 @@ async def upload_excel_document(
     response = await excel_service.upload_file(
         "/documents/upload",
         file=file,
-        data={"title": title, "description": description}
+        data={
+            "title": title, 
+            "description": description,
+            "user_id": str(current_user["id"])
+        }
     )
 
     return response
@@ -54,7 +61,8 @@ async def upload_excel_document(
 @router.post("/convert/to-pdf", summary="Chuyển đổi tài liệu Excel sang PDF")
 async def convert_excel_to_pdf(
         file: UploadFile = File(...),
-        background_tasks: BackgroundTasks = None
+        background_tasks: BackgroundTasks = None,
+        current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Chuyển đổi tài liệu Excel sang định dạng PDF.
@@ -64,7 +72,8 @@ async def convert_excel_to_pdf(
 
     response = await excel_service.upload_file(
         "/documents/convert/to-pdf",
-        file=file
+        file=file,
+        data={"user_id": str(current_user["id"])}
     )
 
     return response
@@ -73,7 +82,8 @@ async def convert_excel_to_pdf(
 @router.post("/convert/to-word", summary="Chuyển đổi tài liệu Excel sang Word")
 async def convert_excel_to_word(
         file: UploadFile = File(...),
-        background_tasks: BackgroundTasks = None
+        background_tasks: BackgroundTasks = None,
+        current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Chuyển đổi tài liệu Excel sang định dạng Word.
@@ -82,7 +92,8 @@ async def convert_excel_to_word(
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .xls hoặc .xlsx")
     response = await excel_service.upload_file(
         "/documents/convert/to-word",
-        file=file
+        file=file,
+        data={"user_id": str(current_user["id"])}
     )
 
     return response
@@ -92,7 +103,8 @@ async def convert_excel_to_word(
 async def merge_excel_files(
         files: List[UploadFile] = File(...),
         output_filename: str = Form(...),
-        background_tasks: BackgroundTasks = None
+        background_tasks: BackgroundTasks = None,
+        current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Gộp nhiều file Excel thành một file duy nhất.
@@ -107,7 +119,10 @@ async def merge_excel_files(
     response = await excel_service.upload_files(
         "/documents/merge",
         files=files,
-        data={"output_filename": output_filename}
+        data={
+            "output_filename": output_filename,
+            "user_id": str(current_user["id"])
+        }
     )
 
     return response
@@ -117,12 +132,13 @@ async def merge_excel_files(
 async def get_excel_templates(
         category: Optional[str] = None,
         skip: int = 0,
-        limit: int = 10
+        limit: int = 10,
+        current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Lấy danh sách mẫu tài liệu Excel từ hệ thống.
     """
-    params = {"skip": skip, "limit": limit}
+    params = {"skip": skip, "limit": limit, "user_id": current_user["id"]}
     if category:
         params["category"] = category
 
@@ -134,7 +150,8 @@ async def get_excel_templates(
 async def apply_excel_template(
         template_id: str = Form(...),
         data: str = Form(...),
-        output_format: str = Form("xlsx")
+        output_format: str = Form("xlsx"),
+        current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Áp dụng mẫu tài liệu Excel với dữ liệu được cung cấp.
@@ -148,7 +165,8 @@ async def apply_excel_template(
         json={
             "template_id": template_id,
             "data": data,
-            "output_format": output_format
+            "output_format": output_format,
+            "user_id": current_user["id"]
         }
     )
 
@@ -156,17 +174,23 @@ async def apply_excel_template(
 
 
 @router.get("/download/{document_id}", summary="Tải xuống tài liệu Excel")
-async def download_excel_document(document_id: str):
+async def download_excel_document(
+    document_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """
     Tải xuống tài liệu Excel theo ID.
     """
-    return await excel_service.get_file(f"/documents/download/{document_id}")
+    return await excel_service.get_file(f"/documents/download/{document_id}?user_id={current_user['id']}")
 
 
 @router.delete("/{document_id}", summary="Xóa tài liệu Excel")
-async def delete_excel_document(document_id: str):
+async def delete_excel_document(
+    document_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """
     Xóa tài liệu Excel theo ID.
     """
-    response = await excel_service.delete(f"/documents/{document_id}")
+    response = await excel_service.delete(f"/documents/{document_id}?user_id={current_user['id']}")
     return response

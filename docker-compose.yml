@@ -7,21 +7,26 @@ services:
       context: ./gateway
       dockerfile: Dockerfile
     ports:
-      - "6000:6000"
+      - "${GATEWAY_PORT}:${GATEWAY_PORT}"
     environment:
-      - WORD_SERVICE_URL=http://service-word:6001
-      - EXCEL_SERVICE_URL=http://service-excel:6002
-      - PDF_SERVICE_URL=http://service-pdf:6003
+      - WORD_SERVICE_URL=http://service-word:${WORD_SERVICE_PORT}
+      - EXCEL_SERVICE_URL=http://service-excel:${EXCEL_SERVICE_PORT}
+      - PDF_SERVICE_URL=http://service-pdf:${PDF_SERVICE_PORT}
+      - FILES_SERVICE_URL=http://service-files:${FILES_SERVICE_PORT}
+      - USER_SERVICE_URL=http://service-user:${USER_SERVICE_PORT}
       - RABBITMQ_HOST=rabbitmq
       - MINIO_HOST=minio
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
     volumes:
       - ./gateway:/app
     depends_on:
       - service-word
       - service-excel
       - service-pdf
+      - service-files
+      - service-user
       - rabbitmq
       - minio
     networks:
@@ -34,7 +39,8 @@ services:
       context: ./service-word
       dockerfile: Dockerfile
     ports:
-      - "6001:6001"
+      - "${WORD_SERVICE_PORT}:${WORD_SERVICE_PORT}"
+      - "50051:50051"
     environment:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
@@ -61,7 +67,7 @@ services:
       context: ./service-excel
       dockerfile: Dockerfile
     ports:
-      - "6002:6002"
+      - "${EXCEL_SERVICE_PORT}:${EXCEL_SERVICE_PORT}"
     environment:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
@@ -88,7 +94,7 @@ services:
       context: ./service-pdf
       dockerfile: Dockerfile
     ports:
-      - "6003:6003"
+      - "${PDF_SERVICE_PORT}:${PDF_SERVICE_PORT}"
     environment:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
@@ -109,7 +115,86 @@ services:
       - document-network
     restart: always
 
-  # RabbitMQ - Hệ thống hàng đợi tin nhắn
+  # Dịch vụ xử lý nén tài liệu
+  service-files:
+    build:
+      context: ./service-files
+      dockerfile: Dockerfile
+    ports:
+      - "${FILES_SERVICE_PORT}:${FILES_SERVICE_PORT}"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASS=${RABBITMQ_PASS}
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    volumes:
+      - ./service-files:/app
+      - files-templates:/app/templates
+      - files-temp:/app/temp
+    depends_on:
+      - rabbitmq
+      - minio
+    networks:
+      - document-network
+    restart: always
+
+  # Dịch vụ người dùng
+  service-user:
+    build:
+      context: ./service-user
+      dockerfile: Dockerfile
+    ports:
+      - "${USER_SERVICE_PORT}:${USER_SERVICE_PORT}"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASS=${RABBITMQ_PASS}
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=${JWT_ALGORITHM}
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=${JWT_ACCESS_TOKEN_EXPIRE_MINUTES}
+      - JWT_REFRESH_TOKEN_EXPIRE_DAYS=${JWT_REFRESH_TOKEN_EXPIRE_DAYS}
+    networks:
+      - document-network
+    depends_on:
+      - postgres
+      - rabbitmq
+      - minio
+    volumes:
+      - ./service-user:/app
+      - ./data:/app/data
+    restart: always
+
+  # PostgreSQL - Cơ sở dữ liệu
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "${POSTGRES_PORT:-6006}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-document_processing}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - document-network
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RabbitMQ - hàng đợi tin nhắn
   rabbitmq:
     image: rabbitmq:3-management
     ports:
@@ -119,7 +204,7 @@ services:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS}
     volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
+      - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - document-network
     restart: always
@@ -134,22 +219,44 @@ services:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
     volumes:
-      - minio-data:/data
+      - minio_data:/data
     command: server --console-address ":9001" /data
     networks:
       - document-network
     restart: always
+
+  # Dịch vụ khởi tạo cơ sở dữ liệu
+  db-init:
+    image: postgres:15-alpine
+    command: sh -c "sleep 10 && sh /init-db.sh"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-document_processing}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+    volumes:
+      - ./init-db.sh:/init-db.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - document-network
+    restart: on-failure
 
 networks:
   document-network:
     driver: bridge
 
 volumes:
-  rabbitmq-data:
-  minio-data:
+  rabbitmq_data:
+  minio_data:
   word-templates:
   word-temp:
   excel-templates:
   excel-temp:
   pdf-templates:
   pdf-temp:
+  files-templates:
+  files-temp:
+  postgres_data:

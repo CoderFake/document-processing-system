@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     WORD_SERVICE_URL: str = os.getenv("WORD_SERVICE_URL", "http://service-word:6001")
     EXCEL_SERVICE_URL: str = os.getenv("EXCEL_SERVICE_URL", "http://service-excel:6002")
     PDF_SERVICE_URL: str = os.getenv("PDF_SERVICE_URL", "http://service-pdf:6003")
+    FILES_SERVICE_URL: str = os.getenv("FILES_SERVICE_URL", "http://service-files:6004")
+    USER_SERVICE_URL: str = os.getenv("USER_SERVICE_URL", "http://service-user:6005")
 
     RABBITMQ_HOST: str = os.getenv("RABBITMQ_HOST", "rabbitmq")
     RABBITMQ_PORT: int = 5672

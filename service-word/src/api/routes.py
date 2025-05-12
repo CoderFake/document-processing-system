@@ -8,7 +8,7 @@ import shutil
 from datetime import datetime
 import json
 
-from domain.models import DocumentInfo, TemplateInfo
+from domain.models import DocumentInfo, TemplateInfo, InternshipReportModel, RewardReportModel, LaborContractModel
 from application.dto import CreateDocumentDTO, TemplateDataDTO, WatermarkDTO
 from application.services import DocumentService, TemplateService
 from infrastructure.repository import DocumentRepository, TemplateRepository
@@ -104,7 +104,7 @@ async def convert_to_pdf(
     """
     try:
         if not file.filename.endswith(('.doc', '.docx')):
-            raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
+            raise HTTPException(status_code=400, detail="Only .doc or .docx files are accepted")
 
         content = await file.read()
 
@@ -293,5 +293,126 @@ async def delete_document(
     try:
         await document_service.delete_document(document_id)
         return {"status": "success", "message": "Tài liệu đã được xóa thành công"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/templates/internship-report", summary="Tạo báo cáo kết quả thực tập")
+async def create_internship_report(
+        data: InternshipReportModel,
+        template_service: TemplateService = Depends(get_template_service)
+):
+    """
+    Tạo báo cáo kết quả thực tập từ template với dữ liệu được cung cấp.
+    """
+    try:
+        template_data_dto = TemplateDataDTO(
+            template_id="internship-report",
+            data=data.dict(),
+            output_format="docx"
+        )
+
+        result = await template_service.apply_template(template_data_dto)
+
+        return {
+            "status": "success",
+            "message": "Báo cáo kết quả thực tập đã được tạo thành công",
+            "filename": result["filename"],
+            "download_url": f"/documents/download/{result['id']}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/templates/reward-report", summary="Tạo báo cáo thưởng")
+async def create_reward_report(
+        data: RewardReportModel,
+        template_service: TemplateService = Depends(get_template_service)
+):
+    """
+    Tạo báo cáo thưởng từ template với dữ liệu được cung cấp.
+    """
+    try:
+        template_data_dto = TemplateDataDTO(
+            template_id="reward-report",
+            data=data.dict(),
+            output_format="docx"
+        )
+
+        result = await template_service.apply_template(template_data_dto)
+
+        return {
+            "status": "success",
+            "message": "Báo cáo thưởng đã được tạo thành công",
+            "filename": result["filename"],
+            "download_url": f"/documents/download/{result['id']}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/templates/labor-contract", summary="Tạo hợp đồng lao động")
+async def create_labor_contract(
+        data: LaborContractModel,
+        template_service: TemplateService = Depends(get_template_service)
+):
+    """
+    Tạo hợp đồng lao động từ template với dữ liệu được cung cấp.
+    """
+    try:
+        template_data_dto = TemplateDataDTO(
+            template_id="labor-contract",
+            data=data.dict(),
+            output_format="docx"
+        )
+
+        result = await template_service.apply_template(template_data_dto)
+
+        return {
+            "status": "success",
+            "message": "Hợp đồng lao động đã được tạo thành công",
+            "filename": result["filename"],
+            "download_url": f"/documents/download/{result['id']}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/templates/invitation", summary="Tạo lời mời từ danh sách nhân viên")
+async def generate_invitations(
+        background_tasks: BackgroundTasks = None,
+        template_service: TemplateService = Depends(get_template_service),
+        data_file: UploadFile = File(...),
+        output_format: str = Form("docx")
+):
+    """
+    Tạo lời mời từ danh sách nhân viên trong file Excel.
+    
+    - **data_file**: File Excel chứa danh sách nhân viên
+    - **output_format**: Định dạng đầu ra (docx, pdf, zip)
+    """
+    try:
+        if not data_file.filename.endswith(('.xlsx', '.xls')):
+            raise HTTPException(status_code=400, detail="Chỉ chấp nhận file Excel (.xlsx, .xls)")
+
+        content = await data_file.read()
+
+        task_id = str(uuid.uuid4())
+
+        if background_tasks:
+            background_tasks.add_task(
+                template_service.process_batch_async,
+                task_id,
+                "invitation",
+                content,
+                data_file.filename,
+                output_format
+            )
+
+        return {
+            "status": "processing",
+            "message": "Yêu cầu tạo lời mời đã được gửi đi",
+            "task_id": task_id
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

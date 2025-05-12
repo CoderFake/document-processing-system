@@ -4,37 +4,39 @@ from typing import List, Dict, Any, Optional
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Files Compression Service"
-    PROJECT_DESCRIPTION: str = "Dịch vụ xử lý tệp tin nén ZIP, RAR, 7Z và các định dạng khác"
+    PROJECT_NAME: str = "User Management Service"
+    PROJECT_DESCRIPTION: str = "Dịch vụ quản lý người dùng và phân quyền"
     PROJECT_VERSION: str = "1.0.0"
 
     HOST: str = "0.0.0.0"
-    PORT: int = 6004
+    PORT: int = 6005
     DEBUG_MODE: bool = os.getenv("APP_ENV", "development") == "development"
     WORKERS: int = 1
 
     ALLOWED_ORIGINS: List[str] = ["*"]
 
+    # Database settings
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/users")
+    
+    # JWT settings
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "secret_key_for_jwt_please_change_in_production")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # RabbitMQ settings
     RABBITMQ_HOST: str = os.getenv("RABBITMQ_HOST", "rabbitmq")
     RABBITMQ_PORT: int = int(os.getenv("RABBITMQ_PORT", "5672"))
     RABBITMQ_USER: str = os.getenv("RABBITMQ_USER", "admin")
     RABBITMQ_PASS: str = os.getenv("RABBITMQ_PASS", "adminpassword")
     RABBITMQ_VHOST: str = os.getenv("RABBITMQ_VHOST", "/")
 
+    # MinIO settings
     MINIO_HOST: str = os.getenv("MINIO_HOST", "minio")
     MINIO_PORT: int = int(os.getenv("MINIO_PORT", "9000"))
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
     MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-    MINIO_ARCHIVE_BUCKET: str = "archive-files"
-    MINIO_EXTRACTED_BUCKET: str = "extracted-files"
-
-    TEMPLATES_DIR: str = "/app/templates"
-    TEMP_DIR: str = "/app/temp"
-
-    DEFAULT_PAGE_SIZE: int = 10
-    MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100MB
-
-    SUPPORTED_ARCHIVE_FORMATS: List[str] = [".zip", ".rar", ".7z", ".tar", ".gz", ".tar.gz"]
+    MINIO_USER_BUCKET: str = "user-profiles"
 
     class Config:
         env_file = ".env"
@@ -43,5 +45,4 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-os.makedirs(settings.TEMPLATES_DIR, exist_ok=True)
-os.makedirs(settings.TEMP_DIR, exist_ok=True)
+os.makedirs(os.path.join(os.path.dirname(__file__), "../logs"), exist_ok=True) 

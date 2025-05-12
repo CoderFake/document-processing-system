@@ -15,6 +15,11 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: List[str] = ["*"]
 
+    # Cấu hình gRPC
+    GRPC_PORT: int = 50051
+    GRPC_WORKERS: int = 10
+    GRPC_MAX_MESSAGE_SIZE: int = 100 * 1024 * 1024  # 100MB
+
     RABBITMQ_HOST: str = os.getenv("RABBITMQ_HOST", "rabbitmq")
     RABBITMQ_PORT: int = int(os.getenv("RABBITMQ_PORT", "5672"))
     RABBITMQ_USER: str = os.getenv("RABBITMQ_USER", "admin")
