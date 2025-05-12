@@ -1,0 +1,155 @@
+version: '3.8'
+
+services:
+  # Gateway API - Cổng giao tiếp chính
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    ports:
+      - "6000:6000"
+    environment:
+      - WORD_SERVICE_URL=http://service-word:6001
+      - EXCEL_SERVICE_URL=http://service-excel:6002
+      - PDF_SERVICE_URL=http://service-pdf:6003
+      - RABBITMQ_HOST=rabbitmq
+      - MINIO_HOST=minio
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    volumes:
+      - ./gateway:/app
+    depends_on:
+      - service-word
+      - service-excel
+      - service-pdf
+      - rabbitmq
+      - minio
+    networks:
+      - document-network
+    restart: always
+
+  # Dịch vụ xử lý tài liệu Word/DOCX
+  service-word:
+    build:
+      context: ./service-word
+      dockerfile: Dockerfile
+    ports:
+      - "6001:6001"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASS=${RABBITMQ_PASS}
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    volumes:
+      - ./service-word:/app
+      - word-templates:/app/templates
+      - word-temp:/app/temp
+    depends_on:
+      - rabbitmq
+      - minio
+    networks:
+      - document-network
+    restart: always
+
+  # Dịch vụ xử lý tài liệu Excel
+  service-excel:
+    build:
+      context: ./service-excel
+      dockerfile: Dockerfile
+    ports:
+      - "6002:6002"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASS=${RABBITMQ_PASS}
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    volumes:
+      - ./service-excel:/app
+      - excel-templates:/app/templates
+      - excel-temp:/app/temp
+    depends_on:
+      - rabbitmq
+      - minio
+    networks:
+      - document-network
+    restart: always
+
+  # Dịch vụ xử lý tài liệu PDF/PNG
+  service-pdf:
+    build:
+      context: ./service-pdf
+      dockerfile: Dockerfile
+    ports:
+      - "6003:6003"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASS=${RABBITMQ_PASS}
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    volumes:
+      - ./service-pdf:/app
+      - pdf-templates:/app/templates
+      - pdf-temp:/app/temp
+    depends_on:
+      - rabbitmq
+      - minio
+    networks:
+      - document-network
+    restart: always
+
+  # RabbitMQ - Hệ thống hàng đợi tin nhắn
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "6004:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - document-network
+    restart: always
+
+  # MinIO - Lưu trữ dạng S3
+  minio:
+    image: minio/minio
+    ports:
+      - "6005:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    command: server --console-address ":9001" /data
+    networks:
+      - document-network
+    restart: always
+
+networks:
+  document-network:
+    driver: bridge
+
+volumes:
+  rabbitmq-data:
+  minio-data:
+  word-templates:
+  word-temp:
+  excel-templates:
+  excel-temp:
+  pdf-templates:
+  pdf-temp:
