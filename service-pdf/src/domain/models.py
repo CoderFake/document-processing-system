@@ -70,8 +70,8 @@ class PDFProcessingInfo(BaseModel):
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     document_id: str
-    operation_type: str  # encrypt, decrypt, sign, watermark, crack, merge
-    status: str = "processing"  # processing, completed, failed
+    operation_type: str  
+    status: str = "processing"  
     created_at: datetime = Field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     result_document_id: Optional[str] = None
@@ -89,7 +89,7 @@ class MergeInfo(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     document_ids: List[str]
     created_at: datetime = Field(default_factory=datetime.now)
-    status: str = "processing"  # processing, completed, failed
+    status: str = "processing"  
     output_filename: str
     result_document_id: Optional[str] = None
     error_message: Optional[str] = None

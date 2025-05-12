@@ -18,7 +18,6 @@ from infrastructure.minio_client import MinioClient
 from infrastructure.rabbitmq_client import RabbitMQClient
 from core.config import settings
 
-# Thư viện xử lý Word
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -60,7 +59,6 @@ class DocumentService:
         Returns:
             Thông tin tài liệu đã tạo
         """
-        # Tạo thông tin tài liệu
         document_info = DocumentInfo(
             title=dto.title,
             description=dto.description,
@@ -68,11 +66,10 @@ class DocumentService:
             file_size=len(content),
             file_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document" if dto.original_filename.endswith(
                 ".docx") else "application/msword",
-            storage_path="",  # Sẽ được cập nhật sau khi lưu
+            storage_path="",  
             metadata=dto.metadata
         )
 
-        # Lưu tài liệu
         document_info = await self.document_repository.save(document_info, content)
 
         return document_info
@@ -124,51 +121,40 @@ class DocumentService:
             Dict chứa thông tin tài liệu PDF
         """
         try:
-            # Tạo file tạm cho tài liệu Word
             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_word:
                 temp_word.write(content)
                 temp_word_path = temp_word.name
 
-            # Tạo đường dẫn cho file PDF
             pdf_filename = os.path.splitext(original_filename)[0] + ".pdf"
             temp_pdf_path = os.path.join(settings.TEMP_DIR, pdf_filename)
 
-            # Chuyển đổi Word sang PDF
             try:
-                # Sử dụng COM để chuyển đổi
                 word = comtypes.client.CreateObject('Word.Application')
                 word.Visible = False
 
-                # Mở file Word
                 doc = word.Documents.Open(temp_word_path)
 
-                # Lưu dưới dạng PDF
-                doc.SaveAs(temp_pdf_path, FileFormat=17)  # 17 là mã định dạng PDF
+                doc.SaveAs(temp_pdf_path, FileFormat=17)  
 
-                # Đóng file và ứng dụng Word
                 doc.Close()
                 word.Quit()
 
-                # Đọc nội dung file PDF
                 with open(temp_pdf_path, "rb") as f:
                     pdf_content = f.read()
 
-                # Xóa file tạm
                 os.unlink(temp_word_path)
                 os.unlink(temp_pdf_path)
 
-                # Tạo thông tin tài liệu PDF
                 document_info = DocumentInfo(
                     title=os.path.splitext(original_filename)[0],
                     description=f"PDF được chuyển đổi từ {original_filename}",
                     original_filename=pdf_filename,
                     file_size=len(pdf_content),
                     file_type="application/pdf",
-                    storage_path="",  # Sẽ được cập nhật sau khi lưu
+                    storage_path="",  
                     metadata={"converted_from": original_filename}
                 )
 
-                # Lưu tài liệu PDF
                 document_info = await self.document_repository.save(document_info, pdf_content)
 
                 return {
@@ -177,7 +163,6 @@ class DocumentService:
                     "file_size": document_info.file_size
                 }
             except Exception as e:
-                # Xóa file tạm nếu có lỗi
                 if os.path.exists(temp_word_path):
                     os.unlink(temp_word_path)
                 if os.path.exists(temp_pdf_path):
@@ -200,59 +185,47 @@ class DocumentService:
             Dict chứa thông tin tài liệu đã thêm watermark
         """
         try:
-            # Tạo file tạm cho tài liệu Word
             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_word:
                 temp_word.write(content)
                 temp_word_path = temp_word.name
 
-            # Tạo đường dẫn cho file kết quả
             watermark_filename = os.path.splitext(original_filename)[0] + "_watermark.docx"
             temp_result_path = os.path.join(settings.TEMP_DIR, watermark_filename)
 
             try:
-                # Mở tài liệu Word
                 doc = Document(temp_word_path)
 
-                # Thêm watermark vào tài liệu
                 for section in doc.sections:
                     header = section.header
                     paragraph = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
 
-                    # Xóa nội dung cũ
                     paragraph.clear()
 
-                    # Thêm watermark
                     run = paragraph.add_run(dto.text)
                     run.font.size = Pt(40)
-                    run.font.color.rgb = RGBColor(192, 192, 192)  # Màu xám
+                    run.font.color.rgb = RGBColor(192, 192, 192)  
                     run.font.bold = True
 
-                    # Thiết lập căn giữa
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-                # Lưu tài liệu
                 doc.save(temp_result_path)
 
-                # Đọc nội dung file kết quả
                 with open(temp_result_path, "rb") as f:
                     result_content = f.read()
 
-                # Xóa file tạm
                 os.unlink(temp_word_path)
                 os.unlink(temp_result_path)
 
-                # Tạo thông tin tài liệu kết quả
                 document_info = DocumentInfo(
                     title=os.path.splitext(original_filename)[0] + " (Watermark)",
                     description=f"Tài liệu với watermark '{dto.text}'",
                     original_filename=watermark_filename,
                     file_size=len(result_content),
                     file_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    storage_path="",  # Sẽ được cập nhật sau khi lưu
+                    storage_path="",  
                     metadata={"watermark": dto.text, "original_filename": original_filename}
                 )
 
-                # Lưu tài liệu kết quả
                 document_info = await self.document_repository.save(document_info, result_content)
 
                 return {
@@ -261,7 +234,6 @@ class DocumentService:
                     "file_size": document_info.file_size
                 }
             except Exception as e:
-                # Xóa file tạm nếu có lỗi
                 if os.path.exists(temp_word_path):
                     os.unlink(temp_word_path)
                 if os.path.exists(temp_result_path):
@@ -279,13 +251,10 @@ class DocumentService:
             document_id: ID của tài liệu
         """
         try:
-            # Lấy thông tin tài liệu
             document_info, content = await self.document_repository.get(document_id)
 
-            # Gửi tin nhắn để xử lý tài liệu
             await self.rabbitmq_client.publish_convert_to_pdf_task(document_id)
         except Exception as e:
-            # Log lỗi
             print(f"Lỗi khi xử lý tài liệu {document_id}: {str(e)}")
 
 
@@ -324,19 +293,17 @@ class TemplateService:
         Returns:
             Thông tin mẫu tài liệu đã tạo
         """
-        # Tạo thông tin mẫu tài liệu
         template_info = TemplateInfo(
             name=dto.name,
             description=dto.description,
             category=dto.category,
             original_filename=dto.original_filename,
             file_size=len(content),
-            storage_path="",  # Sẽ được cập nhật sau khi lưu
+            storage_path="",  
             data_fields=dto.data_fields,
             metadata=dto.metadata
         )
 
-        # Lưu mẫu tài liệu
         template_info = await self.template_repository.save(template_info, content)
 
         return template_info
@@ -387,29 +354,23 @@ class TemplateService:
             Dict chứa thông tin tài liệu đã tạo
         """
         try:
-            # Lấy thông tin và nội dung mẫu tài liệu
             template_info, template_content = await self.template_repository.get(dto.template_id)
 
-            # Tạo file tạm cho mẫu tài liệu
             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_template:
                 temp_template.write(template_content)
                 temp_template_path = temp_template.name
 
-            # Tạo đường dẫn cho file kết quả
             result_filename = f"{template_info.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             temp_result_path = os.path.join(settings.TEMP_DIR, result_filename)
 
             try:
-                # Mở mẫu tài liệu
                 doc = Document(temp_template_path)
 
-                # Áp dụng dữ liệu vào mẫu
                 for paragraph in doc.paragraphs:
                     for key, value in dto.data.items():
                         if f"{{{{{key}}}}}" in paragraph.text:
                             paragraph.text = paragraph.text.replace(f"{{{{{key}}}}}", str(value))
 
-                # Áp dụng dữ liệu vào các bảng
                 for table in doc.tables:
                     for row in table.rows:
                         for cell in row.cells:
@@ -418,55 +379,42 @@ class TemplateService:
                                     if f"{{{{{key}}}}}" in paragraph.text:
                                         paragraph.text = paragraph.text.replace(f"{{{{{key}}}}}", str(value))
 
-                # Lưu tài liệu
                 doc.save(temp_result_path)
 
-                # Xử lý output format
                 if dto.output_format.lower() == "pdf":
-                    # Chuyển đổi sang PDF
                     pdf_filename = os.path.splitext(result_filename)[0] + ".pdf"
                     temp_pdf_path = os.path.join(settings.TEMP_DIR, pdf_filename)
 
-                    # Sử dụng COM để chuyển đổi
                     word_app = comtypes.client.CreateObject('Word.Application')
                     word_app.Visible = False
 
-                    # Mở file Word
                     word_doc = word_app.Documents.Open(temp_result_path)
 
-                    # Lưu dưới dạng PDF
-                    word_doc.SaveAs(temp_pdf_path, FileFormat=17)  # 17 là mã định dạng PDF
+                    word_doc.SaveAs(temp_pdf_path, FileFormat=17)  
 
-                    # Đóng file và ứng dụng Word
                     word_doc.Close()
                     word_app.Quit()
 
-                    # Đọc nội dung file PDF
                     with open(temp_pdf_path, "rb") as f:
                         result_content = f.read()
 
-                    # Xóa file tạm
                     os.unlink(temp_pdf_path)
 
-                    # Cập nhật tên file
                     result_filename = pdf_filename
                 else:
-                    # Đọc nội dung file Word
                     with open(temp_result_path, "rb") as f:
                         result_content = f.read()
 
-                # Xóa file tạm
                 os.unlink(temp_template_path)
                 os.unlink(temp_result_path)
 
-                # Tạo thông tin tài liệu kết quả
                 document_info = DocumentInfo(
                     title=f"{template_info.name} - {datetime.now().strftime('%Y-%m-%d')}",
                     description=f"Tài liệu được tạo từ mẫu '{template_info.name}'",
                     original_filename=result_filename,
                     file_size=len(result_content),
                     file_type="application/pdf" if dto.output_format.lower() == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    storage_path="",  # Sẽ được cập nhật sau khi lưu
+                    storage_path="",  
                     metadata={
                         "template_id": template_info.id,
                         "template_name": template_info.name,
@@ -474,7 +422,6 @@ class TemplateService:
                     }
                 )
 
-                # Lưu tài liệu kết quả (sử dụng Document Repository)
                 document_repository = DocumentRepository(self.minio_client)
                 document_info = await document_repository.save(document_info, result_content)
 
@@ -484,7 +431,6 @@ class TemplateService:
                     "file_size": document_info.file_size
                 }
             except Exception as e:
-                # Xóa file tạm nếu có lỗi
                 if os.path.exists(temp_template_path):
                     os.unlink(temp_template_path)
                 if os.path.exists(temp_result_path):
@@ -509,7 +455,6 @@ class TemplateService:
             output_format: Định dạng đầu ra
         """
         try:
-            # Lưu thông tin batch
             batch_info = BatchProcessingInfo(
                 id=task_id,
                 template_id=template_id,
@@ -518,13 +463,11 @@ class TemplateService:
 
             await self.batch_repository.save(batch_info)
 
-            # Đọc dữ liệu từ file
             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{filename.split('.')[-1]}") as temp_file:
                 temp_file.write(content)
                 temp_file_path = temp_file.name
 
             try:
-                # Đọc dữ liệu
                 if filename.endswith('.csv'):
                     data_list = pd.read_csv(temp_file_path).to_dict('records')
                 elif filename.endswith(('.xlsx', '.xls')):
@@ -532,17 +475,13 @@ class TemplateService:
                 else:
                     raise TemplateApplicationException(f"Định dạng file không được hỗ trợ: {filename}")
 
-                # Cập nhật thông tin batch
                 batch_info.total_documents = len(data_list)
                 await self.batch_repository.update(batch_info)
 
-                # Tạo một tài liệu cho mỗi bản ghi
                 result_documents = []
 
-                # Xử lý từng bản ghi
                 for i, data in enumerate(data_list):
                     try:
-                        # Áp dụng mẫu
                         template_data_dto = TemplateDataDTO(
                             template_id=template_id,
                             data=data,
@@ -552,17 +491,14 @@ class TemplateService:
                         result = await self.apply_template(template_data_dto)
                         result_documents.append(result)
 
-                        # Cập nhật tiến trình
                         batch_info.processed_documents = i + 1
                         await self.batch_repository.update(batch_info)
                     except Exception as e:
                         print(f"Lỗi khi xử lý bản ghi thứ {i}: {str(e)}")
 
-                # Nếu output_format là zip, tạo file zip chứa tất cả các tài liệu
                 if output_format.lower() == "zip":
                     document_repository = DocumentRepository(self.minio_client)
 
-                    # Tạo file zip
                     zip_filename = f"batch_{task_id}.zip"
                     temp_zip_path = os.path.join(settings.TEMP_DIR, zip_filename)
 
@@ -571,18 +507,16 @@ class TemplateService:
                             document_info, content = await document_repository.get(result["id"])
                             zipf.writestr(document_info.original_filename, content)
 
-                    # Đọc nội dung file zip
                     with open(temp_zip_path, "rb") as f:
                         zip_content = f.read()
 
-                    # Tạo thông tin tài liệu zip
                     zip_document_info = DocumentInfo(
                         title=f"Batch {task_id}",
                         description=f"File ZIP chứa {len(result_documents)} tài liệu được tạo từ mẫu",
                         original_filename=zip_filename,
                         file_size=len(zip_content),
                         file_type="application/zip",
-                        storage_path="",  # Sẽ được cập nhật sau khi lưu
+                        storage_path="",  
                         metadata={
                             "template_id": template_id,
                             "batch_id": task_id,
@@ -590,39 +524,31 @@ class TemplateService:
                         }
                     )
 
-                    # Lưu tài liệu zip
                     zip_document_info = await document_repository.save(zip_document_info, zip_content)
 
-                    # Cập nhật thông tin batch
                     batch_info.status = "completed"
                     batch_info.completed_at = datetime.now()
                     batch_info.result_file_id = zip_document_info.id
                     batch_info.result_file_path = zip_document_info.storage_path
                     await self.batch_repository.update(batch_info)
 
-                    # Xóa file tạm
                     os.unlink(temp_zip_path)
                 else:
-                    # Cập nhật thông tin batch
                     batch_info.status = "completed"
                     batch_info.completed_at = datetime.now()
                     await self.batch_repository.update(batch_info)
             except Exception as e:
-                # Xóa file tạm
                 if os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
 
-                # Cập nhật thông tin batch
                 batch_info.status = "failed"
                 batch_info.error_message = str(e)
                 await self.batch_repository.update(batch_info)
 
                 raise TemplateApplicationException(f"Lỗi khi xử lý batch: {str(e)}")
 
-            # Xóa file tạm
             os.unlink(temp_file_path)
         except Exception as e:
-            # Lưu thông tin lỗi
             try:
                 batch_info = await self.batch_repository.get(task_id)
                 batch_info.status = "failed"

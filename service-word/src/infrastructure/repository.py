@@ -39,7 +39,6 @@ class DocumentRepository:
                     for doc_id, doc_data in data.items():
                         self.documents[doc_id] = DocumentInfo(**doc_data)
         except Exception as e:
-            # Tạo file mới nếu không thể tải
             self._save_metadata()
 
     def _save_metadata(self) -> None:
@@ -65,13 +64,11 @@ class DocumentRepository:
             Thông tin tài liệu đã lưu
         """
         try:
-            # Upload tài liệu lên MinIO
             object_name = await self.minio_client.upload_document(
                 content=content,
                 filename=document_info.original_filename
             )
 
-            # Cập nhật thông tin tài liệu
             document_info.storage_path = object_name
             document_info.file_size = len(content)
             document_info.file_type = (
@@ -80,10 +77,8 @@ class DocumentRepository:
                 else "application/msword"
             )
 
-            # Lưu vào cache
             self.documents[document_info.id] = document_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return document_info
@@ -101,13 +96,11 @@ class DocumentRepository:
             Tuple chứa thông tin và nội dung tài liệu
         """
         try:
-            # Lấy thông tin tài liệu từ cache
             if document_id not in self.documents:
                 raise DocumentNotFoundException(document_id)
 
             document_info = self.documents[document_id]
 
-            # Tải nội dung tài liệu từ MinIO
             content = await self.minio_client.download_document(document_info.storage_path)
 
             return document_info, content
@@ -127,15 +120,12 @@ class DocumentRepository:
             Thông tin tài liệu đã cập nhật
         """
         try:
-            # Kiểm tra tài liệu tồn tại
             if document_info.id not in self.documents:
                 raise DocumentNotFoundException(document_info.id)
 
-            # Cập nhật thông tin
             document_info.updated_at = datetime.now()
             self.documents[document_info.id] = document_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return document_info
@@ -152,19 +142,15 @@ class DocumentRepository:
             document_id: ID của tài liệu
         """
         try:
-            # Kiểm tra tài liệu tồn tại
             if document_id not in self.documents:
                 raise DocumentNotFoundException(document_id)
 
             document_info = self.documents[document_id]
 
-            # Xóa tài liệu từ MinIO
             await self.minio_client.delete_document(document_info.storage_path)
 
-            # Xóa khỏi cache
             del self.documents[document_id]
 
-            # Lưu metadata
             self._save_metadata()
         except DocumentNotFoundException:
             raise
@@ -184,7 +170,6 @@ class DocumentRepository:
             Danh sách tài liệu
         """
         try:
-            # Lọc tài liệu theo từ khóa tìm kiếm
             if search:
                 search = search.lower()
                 filtered_documents = [
@@ -194,14 +179,12 @@ class DocumentRepository:
             else:
                 filtered_documents = list(self.documents.values())
 
-            # Sắp xếp theo thời gian tạo giảm dần
             sorted_documents = sorted(
                 filtered_documents,
                 key=lambda x: x.created_at,
                 reverse=True
             )
 
-            # Phân trang
             return sorted_documents[skip:skip + limit]
         except Exception as e:
             raise StorageException(f"Không thể lấy danh sách tài liệu: {str(e)}")
@@ -235,7 +218,6 @@ class TemplateRepository:
                     for template_id, template_data in data.items():
                         self.templates[template_id] = TemplateInfo(**template_data)
         except Exception as e:
-            # Tạo file mới nếu không thể tải
             self._save_metadata()
 
     def _save_metadata(self) -> None:
@@ -261,20 +243,16 @@ class TemplateRepository:
             Thông tin mẫu tài liệu đã lưu
         """
         try:
-            # Upload mẫu tài liệu lên MinIO
             object_name = await self.minio_client.upload_template(
                 content=content,
                 filename=template_info.original_filename
             )
 
-            # Cập nhật thông tin mẫu tài liệu
             template_info.storage_path = object_name
             template_info.file_size = len(content)
 
-            # Lưu vào cache
             self.templates[template_info.id] = template_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return template_info
@@ -292,13 +270,11 @@ class TemplateRepository:
             Tuple chứa thông tin và nội dung mẫu tài liệu
         """
         try:
-            # Lấy thông tin mẫu tài liệu từ cache
             if template_id not in self.templates:
                 raise TemplateNotFoundException(template_id)
 
             template_info = self.templates[template_id]
 
-            # Tải nội dung mẫu tài liệu từ MinIO
             content = await self.minio_client.download_template(template_info.storage_path)
 
             return template_info, content
@@ -318,15 +294,12 @@ class TemplateRepository:
             Thông tin mẫu tài liệu đã cập nhật
         """
         try:
-            # Kiểm tra mẫu tài liệu tồn tại
             if template_info.id not in self.templates:
                 raise TemplateNotFoundException(template_info.id)
 
-            # Cập nhật thông tin
             template_info.updated_at = datetime.now()
             self.templates[template_info.id] = template_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return template_info
@@ -343,19 +316,15 @@ class TemplateRepository:
             template_id: ID của mẫu tài liệu
         """
         try:
-            # Kiểm tra mẫu tài liệu tồn tại
             if template_id not in self.templates:
                 raise TemplateNotFoundException(template_id)
 
             template_info = self.templates[template_id]
 
-            # Xóa mẫu tài liệu từ MinIO
             await self.minio_client.delete_template(template_info.storage_path)
 
-            # Xóa khỏi cache
             del self.templates[template_id]
 
-            # Lưu metadata
             self._save_metadata()
         except TemplateNotFoundException:
             raise
@@ -375,7 +344,6 @@ class TemplateRepository:
             Danh sách mẫu tài liệu
         """
         try:
-            # Lọc mẫu tài liệu theo danh mục
             if category:
                 filtered_templates = [
                     template for template in self.templates.values()
@@ -384,13 +352,11 @@ class TemplateRepository:
             else:
                 filtered_templates = list(self.templates.values())
 
-            # Sắp xếp theo tên
             sorted_templates = sorted(
                 filtered_templates,
                 key=lambda x: x.name
             )
 
-            # Phân trang
             return sorted_templates[skip:skip + limit]
         except Exception as e:
             raise StorageException(f"Không thể lấy danh sách mẫu tài liệu: {str(e)}")
@@ -420,7 +386,6 @@ class BatchProcessingRepository:
                     for batch_id, batch_data in data.items():
                         self.batches[batch_id] = BatchProcessingInfo(**batch_data)
         except Exception as e:
-            # Tạo file mới nếu không thể tải
             self._save_metadata()
 
     def _save_metadata(self) -> None:
@@ -445,10 +410,8 @@ class BatchProcessingRepository:
             Thông tin xử lý hàng loạt đã lưu
         """
         try:
-            # Lưu vào cache
             self.batches[batch_info.id] = batch_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return batch_info
@@ -466,7 +429,6 @@ class BatchProcessingRepository:
             Thông tin xử lý hàng loạt
         """
         try:
-            # Lấy thông tin xử lý hàng loạt từ cache
             if batch_id not in self.batches:
                 raise DocumentNotFoundException(batch_id)
 
@@ -487,14 +449,11 @@ class BatchProcessingRepository:
             Thông tin xử lý hàng loạt đã cập nhật
         """
         try:
-            # Kiểm tra thông tin xử lý hàng loạt tồn tại
             if batch_info.id not in self.batches:
                 raise DocumentNotFoundException(batch_info.id)
 
-            # Cập nhật thông tin
             self.batches[batch_info.id] = batch_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return batch_info
@@ -511,14 +470,11 @@ class BatchProcessingRepository:
             batch_id: ID của thông tin xử lý hàng loạt
         """
         try:
-            # Kiểm tra thông tin xử lý hàng loạt tồn tại
             if batch_id not in self.batches:
                 raise DocumentNotFoundException(batch_id)
 
-            # Xóa khỏi cache
             del self.batches[batch_id]
 
-            # Lưu metadata
             self._save_metadata()
         except DocumentNotFoundException:
             raise

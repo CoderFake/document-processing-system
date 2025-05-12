@@ -39,7 +39,6 @@ class ExcelDocumentRepository:
                     for doc_id, doc_data in data.items():
                         self.documents[doc_id] = ExcelDocumentInfo(**doc_data)
         except Exception as e:
-            # Tạo file mới nếu không thể tải
             self._save_metadata()
 
     def _save_metadata(self) -> None:
@@ -65,13 +64,11 @@ class ExcelDocumentRepository:
             Thông tin tài liệu đã lưu
         """
         try:
-            # Upload tài liệu lên MinIO
             object_name = await self.minio_client.upload_document(
                 content=content,
                 filename=document_info.original_filename
             )
 
-            # Cập nhật thông tin tài liệu
             document_info.storage_path = object_name
             document_info.file_size = len(content)
             document_info.file_type = (
@@ -80,14 +77,11 @@ class ExcelDocumentRepository:
                 else "application/vnd.ms-excel"
             )
 
-            # Đọc thông tin sheet names
             sheet_names = await self._get_sheet_names(content)
             document_info.sheet_names = sheet_names
 
-            # Lưu vào cache
             self.documents[document_info.id] = document_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return document_info
@@ -105,32 +99,26 @@ class ExcelDocumentRepository:
             Danh sách tên sheet
         """
         try:
-            # Tạo file tạm
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as temp:
                 temp.write(content)
                 temp_path = temp.name
 
             try:
-                # Đọc tên các sheet
                 import openpyxl
                 wb = openpyxl.load_workbook(temp_path, read_only=True)
                 sheet_names = wb.sheetnames
 
-                # Đóng workbook
                 wb.close()
 
-                # Xóa file tạm
                 os.unlink(temp_path)
 
                 return sheet_names
             except Exception as e:
-                # Xóa file tạm nếu có lỗi
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
 
                 raise
         except Exception as e:
-            # Nếu có lỗi, trả về danh sách trống
             return []
 
     async def get(self, document_id: str) -> Tuple[ExcelDocumentInfo, bytes]:
@@ -144,13 +132,11 @@ class ExcelDocumentRepository:
             Tuple chứa thông tin và nội dung tài liệu
         """
         try:
-            # Lấy thông tin tài liệu từ cache
             if document_id not in self.documents:
                 raise DocumentNotFoundException(document_id)
 
             document_info = self.documents[document_id]
 
-            # Tải nội dung tài liệu từ MinIO
             content = await self.minio_client.download_document(document_info.storage_path)
 
             return document_info, content
@@ -170,15 +156,12 @@ class ExcelDocumentRepository:
             Thông tin tài liệu đã cập nhật
         """
         try:
-            # Kiểm tra tài liệu tồn tại
             if document_info.id not in self.documents:
                 raise DocumentNotFoundException(document_info.id)
 
-            # Cập nhật thông tin
             document_info.updated_at = datetime.now()
             self.documents[document_info.id] = document_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return document_info
@@ -195,19 +178,15 @@ class ExcelDocumentRepository:
             document_id: ID của tài liệu
         """
         try:
-            # Kiểm tra tài liệu tồn tại
             if document_id not in self.documents:
                 raise DocumentNotFoundException(document_id)
 
             document_info = self.documents[document_id]
 
-            # Xóa tài liệu từ MinIO
             await self.minio_client.delete_document(document_info.storage_path)
 
-            # Xóa khỏi cache
             del self.documents[document_id]
 
-            # Lưu metadata
             self._save_metadata()
         except DocumentNotFoundException:
             raise
@@ -227,7 +206,6 @@ class ExcelDocumentRepository:
             Danh sách tài liệu
         """
         try:
-            # Lọc tài liệu theo từ khóa tìm kiếm
             if search:
                 search = search.lower()
                 filtered_documents = [
@@ -237,14 +215,12 @@ class ExcelDocumentRepository:
             else:
                 filtered_documents = list(self.documents.values())
 
-            # Sắp xếp theo thời gian tạo giảm dần
             sorted_documents = sorted(
                 filtered_documents,
                 key=lambda x: x.created_at,
                 reverse=True
             )
 
-            # Phân trang
             return sorted_documents[skip:skip + limit]
         except Exception as e:
             raise StorageException(f"Không thể lấy danh sách tài liệu: {str(e)}")
@@ -278,7 +254,6 @@ class ExcelTemplateRepository:
                     for template_id, template_data in data.items():
                         self.templates[template_id] = ExcelTemplateInfo(**template_data)
         except Exception as e:
-            # Tạo file mới nếu không thể tải
             self._save_metadata()
 
     def _save_metadata(self) -> None:
@@ -304,24 +279,19 @@ class ExcelTemplateRepository:
             Thông tin mẫu tài liệu đã lưu
         """
         try:
-            # Upload mẫu tài liệu lên MinIO
             object_name = await self.minio_client.upload_template(
                 content=content,
                 filename=template_info.original_filename
             )
 
-            # Cập nhật thông tin mẫu tài liệu
             template_info.storage_path = object_name
             template_info.file_size = len(content)
 
-            # Đọc thông tin sheet names
             sheet_names = await self._get_sheet_names(content)
             template_info.sheet_names = sheet_names
 
-            # Lưu vào cache
             self.templates[template_info.id] = template_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return template_info
@@ -339,32 +309,26 @@ class ExcelTemplateRepository:
             Danh sách tên sheet
         """
         try:
-            # Tạo file tạm
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as temp:
                 temp.write(content)
                 temp_path = temp.name
 
             try:
-                # Đọc tên các sheet
                 import openpyxl
                 wb = openpyxl.load_workbook(temp_path, read_only=True)
                 sheet_names = wb.sheetnames
 
-                # Đóng workbook
                 wb.close()
 
-                # Xóa file tạm
                 os.unlink(temp_path)
 
                 return sheet_names
             except Exception as e:
-                # Xóa file tạm nếu có lỗi
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
 
                 raise
         except Exception as e:
-            # Nếu có lỗi, trả về danh sách trống
             return []
 
     async def get(self, template_id: str) -> Tuple[ExcelTemplateInfo, bytes]:
@@ -378,13 +342,11 @@ class ExcelTemplateRepository:
             Tuple chứa thông tin và nội dung mẫu tài liệu
         """
         try:
-            # Lấy thông tin mẫu tài liệu từ cache
             if template_id not in self.templates:
                 raise TemplateNotFoundException(template_id)
 
             template_info = self.templates[template_id]
 
-            # Tải nội dung mẫu tài liệu từ MinIO
             content = await self.minio_client.download_template(template_info.storage_path)
 
             return template_info, content
@@ -404,15 +366,12 @@ class ExcelTemplateRepository:
             Thông tin mẫu tài liệu đã cập nhật
         """
         try:
-            # Kiểm tra mẫu tài liệu tồn tại
             if template_info.id not in self.templates:
                 raise TemplateNotFoundException(template_info.id)
 
-            # Cập nhật thông tin
             template_info.updated_at = datetime.now()
             self.templates[template_info.id] = template_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return template_info
@@ -429,19 +388,15 @@ class ExcelTemplateRepository:
             template_id: ID của mẫu tài liệu
         """
         try:
-            # Kiểm tra mẫu tài liệu tồn tại
             if template_id not in self.templates:
                 raise TemplateNotFoundException(template_id)
 
             template_info = self.templates[template_id]
 
-            # Xóa mẫu tài liệu từ MinIO
             await self.minio_client.delete_template(template_info.storage_path)
 
-            # Xóa khỏi cache
             del self.templates[template_id]
 
-            # Lưu metadata
             self._save_metadata()
         except TemplateNotFoundException:
             raise
@@ -461,7 +416,6 @@ class ExcelTemplateRepository:
             Danh sách mẫu tài liệu
         """
         try:
-            # Lọc mẫu tài liệu theo danh mục
             if category:
                 filtered_templates = [
                     template for template in self.templates.values()
@@ -470,13 +424,11 @@ class ExcelTemplateRepository:
             else:
                 filtered_templates = list(self.templates.values())
 
-            # Sắp xếp theo tên
             sorted_templates = sorted(
                 filtered_templates,
                 key=lambda x: x.name
             )
 
-            # Phân trang
             return sorted_templates[skip:skip + limit]
         except Exception as e:
             raise StorageException(f"Không thể lấy danh sách mẫu tài liệu: {str(e)}")
@@ -506,7 +458,6 @@ class BatchProcessingRepository:
                     for batch_id, batch_data in data.items():
                         self.batches[batch_id] = BatchProcessingInfo(**batch_data)
         except Exception as e:
-            # Tạo file mới nếu không thể tải
             self._save_metadata()
 
     def _save_metadata(self) -> None:
@@ -531,10 +482,8 @@ class BatchProcessingRepository:
             Thông tin xử lý hàng loạt đã lưu
         """
         try:
-            # Lưu vào cache
             self.batches[batch_info.id] = batch_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return batch_info
@@ -552,7 +501,6 @@ class BatchProcessingRepository:
             Thông tin xử lý hàng loạt
         """
         try:
-            # Lấy thông tin xử lý hàng loạt từ cache
             if batch_id not in self.batches:
                 raise DocumentNotFoundException(batch_id)
 
@@ -573,14 +521,11 @@ class BatchProcessingRepository:
             Thông tin xử lý hàng loạt đã cập nhật
         """
         try:
-            # Kiểm tra thông tin xử lý hàng loạt tồn tại
             if batch_info.id not in self.batches:
                 raise DocumentNotFoundException(batch_info.id)
 
-            # Cập nhật thông tin
             self.batches[batch_info.id] = batch_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return batch_info
@@ -597,14 +542,11 @@ class BatchProcessingRepository:
             batch_id: ID của thông tin xử lý hàng loạt
         """
         try:
-            # Kiểm tra thông tin xử lý hàng loạt tồn tại
             if batch_id not in self.batches:
                 raise DocumentNotFoundException(batch_id)
 
-            # Xóa khỏi cache
             del self.batches[batch_id]
 
-            # Lưu metadata
             self._save_metadata()
         except DocumentNotFoundException:
             raise
@@ -636,7 +578,6 @@ class MergeRepository:
                     for merge_id, merge_data in data.items():
                         self.merges[merge_id] = MergeInfo(**merge_data)
         except Exception as e:
-            # Tạo file mới nếu không thể tải
             self._save_metadata()
 
     def _save_metadata(self) -> None:
@@ -661,10 +602,8 @@ class MergeRepository:
             Thông tin gộp tài liệu đã lưu
         """
         try:
-            # Lưu vào cache
             self.merges[merge_info.id] = merge_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return merge_info
@@ -682,7 +621,6 @@ class MergeRepository:
             Thông tin gộp tài liệu
         """
         try:
-            # Lấy thông tin gộp tài liệu từ cache
             if merge_id not in self.merges:
                 raise DocumentNotFoundException(merge_id)
 
@@ -703,14 +641,11 @@ class MergeRepository:
             Thông tin gộp tài liệu đã cập nhật
         """
         try:
-            # Kiểm tra thông tin gộp tài liệu tồn tại
             if merge_info.id not in self.merges:
                 raise DocumentNotFoundException(merge_info.id)
 
-            # Cập nhật thông tin
             self.merges[merge_info.id] = merge_info
 
-            # Lưu metadata
             self._save_metadata()
 
             return merge_info
@@ -727,14 +662,11 @@ class MergeRepository:
             merge_id: ID của thông tin gộp tài liệu
         """
         try:
-            # Kiểm tra thông tin gộp tài liệu tồn tại
             if merge_id not in self.merges:
                 raise DocumentNotFoundException(merge_id)
 
-            # Xóa khỏi cache
             del self.merges[merge_id]
 
-            # Lưu metadata
             self._save_metadata()
         except DocumentNotFoundException:
             raise

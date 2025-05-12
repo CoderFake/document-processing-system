@@ -18,7 +18,6 @@ from infrastructure.rabbitmq_client import RabbitMQClient
 router = APIRouter()
 
 
-# Khởi tạo dependencies
 def get_document_service():
     minio_client = MinioClient()
     rabbitmq_client = RabbitMQClient()
@@ -33,7 +32,6 @@ def get_template_service():
     return ExcelTemplateService(template_repo, minio_client, rabbitmq_client)
 
 
-# Routes cho tài liệu Excel
 @router.get("/documents", summary="Lấy danh sách tài liệu Excel")
 async def get_documents(
         skip: int = 0,
@@ -63,25 +61,20 @@ async def upload_document(
     Tải lên tài liệu Excel mới vào hệ thống.
     """
     try:
-        # Kiểm tra loại file
         if not file.filename.endswith(('.xls', '.xlsx')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .xls hoặc .xlsx")
 
-        # Tạo DTO và lưu tài liệu
         document_dto = CreateDocumentDTO(
             title=title or os.path.splitext(file.filename)[0],
             description=description or "",
             original_filename=file.filename
         )
 
-        # Đọc nội dung file
         content = await file.read()
 
-        # Lưu tài liệu
         document_info = await document_service.create_document(document_dto, content)
 
         if background_tasks:
-            # Thêm tác vụ nền (nếu cần)
             background_tasks.add_task(
                 document_service.process_document_async,
                 document_info.id
@@ -111,14 +104,11 @@ async def convert_to_pdf(
     Chuyển đổi tài liệu Excel sang định dạng PDF.
     """
     try:
-        # Kiểm tra loại file
         if not file.filename.endswith(('.xls', '.xlsx')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .xls hoặc .xlsx")
 
-        # Đọc nội dung file
         content = await file.read()
 
-        # Chuyển đổi tài liệu
         result = await document_service.convert_to_pdf(content, file.filename)
 
         return {
@@ -141,14 +131,11 @@ async def convert_to_word(
     Chuyển đổi tài liệu Excel sang định dạng Word.
     """
     try:
-        # Kiểm tra loại file
         if not file.filename.endswith(('.xls', '.xlsx')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .xls hoặc .xlsx")
 
-        # Đọc nội dung file
         content = await file.read()
 
-        # Chuyển đổi tài liệu
         result = await document_service.convert_to_word(content, file.filename)
 
         return {
@@ -175,41 +162,32 @@ async def merge_excel_files(
     - **output_filename**: Tên file kết quả
     """
     try:
-        # Kiểm tra loại file
         for file in files:
             if not file.filename.endswith(('.xls', '.xlsx')):
                 raise HTTPException(status_code=400,
                                     detail=f"File {file.filename} không phải là file Excel (.xls, .xlsx)")
 
-        # Tạo danh sách lưu trữ ID của các tài liệu
         document_ids = []
 
-        # Tải lên và lưu từng file
         for file in files:
-            # Đọc nội dung file
             content = await file.read()
 
-            # Tạo DTO và lưu tài liệu
             document_dto = CreateDocumentDTO(
                 title=os.path.splitext(file.filename)[0],
                 description=f"Phần của tài liệu gộp: {output_filename}",
                 original_filename=file.filename
             )
 
-            # Lưu tài liệu
             document_info = await document_service.create_document(document_dto, content)
 
-            # Thêm ID vào danh sách
             document_ids.append(document_info.id)
 
-        # Gộp các tài liệu
         merge_dto = MergeDocumentsDTO(
             document_ids=document_ids,
             output_filename=output_filename if output_filename.endswith('.xlsx') else f"{output_filename}.xlsx"
         )
 
         if background_tasks:
-            # Thêm tác vụ nền để gộp các tài liệu
             task_id = str(uuid.uuid4())
             background_tasks.add_task(
                 document_service.merge_documents_async,
@@ -223,7 +201,6 @@ async def merge_excel_files(
                 "task_id": task_id
             }
         else:
-            # Gộp các tài liệu ngay lập tức
             result = await document_service.merge_documents(merge_dto)
 
             return {
@@ -268,17 +245,14 @@ async def apply_template(
     - **output_format**: Định dạng đầu ra (xlsx, pdf)
     """
     try:
-        # Parse JSON data
         json_data = json.loads(data)
 
-        # Tạo DTO
         template_data_dto = TemplateDataDTO(
             template_id=template_id,
             data=json_data,
             output_format=output_format
         )
 
-        # Áp dụng mẫu
         result = await template_service.apply_template(template_data_dto)
 
         return {
@@ -302,19 +276,15 @@ async def download_document(
     Tải xuống tài liệu Excel theo ID.
     """
     try:
-        # Tải tài liệu
         document_info, document_content = await document_service.get_document(document_id)
 
-        # Tạo file tạm
         with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{document_info.original_filename}") as temp:
             temp.write(document_content)
             temp_path = temp.name
 
-        # Xác định kiểu MIME
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if document_info.original_filename.endswith(
             ".xlsx") else "application/vnd.ms-excel"
 
-        # Trả về file response
         return FileResponse(
             path=temp_path,
             filename=document_info.original_filename,
@@ -356,14 +326,11 @@ async def create_batch_documents(
     - **output_format**: Định dạng đầu ra (xlsx, pdf, zip)
     """
     try:
-        # Kiểm tra loại file
         if not data_file.filename.endswith(('.csv', '.json')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .csv hoặc .json")
 
-        # Đọc nội dung file
         content = await data_file.read()
 
-        # Thực hiện batch processing - đây là tác vụ nặng nên thực hiện bất đồng bộ
         task_id = str(uuid.uuid4())
 
         if background_tasks:

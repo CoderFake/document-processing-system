@@ -27,7 +27,7 @@ class TemplateDataDTO(BaseModel):
     """
     template_id: str
     data: Dict[str, Any]
-    output_format: str = "xlsx"  # xlsx, pdf
+    output_format: str = "xlsx"  
 
 class BatchProcessingDTO(BaseModel):
     """
@@ -35,7 +35,7 @@ class BatchProcessingDTO(BaseModel):
     """
     template_id: str
     data_list: List[Dict[str, Any]]
-    output_format: str = "xlsx"  # xlsx, pdf, zip
+    output_format: str = "xlsx"  
 
 class MergeDocumentsDTO(BaseModel):
     """
@@ -49,14 +49,14 @@ class ConvertToWordDTO(BaseModel):
     DTO để chuyển đổi tài liệu Excel sang Word.
     """
     document_id: str
-    sheets: Optional[List[str]] = None  # Danh sách các sheet cần chuyển đổi, None = tất cả
+    sheets: Optional[List[str]] = None
 
 class ConvertToPdfDTO(BaseModel):
     """
     DTO để chuyển đổi tài liệu Excel sang PDF.
     """
     document_id: str
-    sheets: Optional[List[str]] = None  # Danh sách các sheet cần chuyển đổi, None = tất cả
+    sheets: Optional[List[str]] = None
 
 class DocumentFilterDTO(BaseModel):
     """

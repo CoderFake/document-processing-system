@@ -39,11 +39,9 @@ async def upload_word_document(
     """
     Tải lên tài liệu Word mới vào hệ thống.
     """
-    # Kiểm tra loại file
     if not file.filename.endswith(('.doc', '.docx')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
-    # Upload file
     response = await word_service.upload_file(
         "/documents/upload",
         file=file,
@@ -61,11 +59,9 @@ async def convert_word_to_pdf(
     """
     Chuyển đổi tài liệu Word sang định dạng PDF.
     """
-    # Kiểm tra loại file
     if not file.filename.endswith(('.doc', '.docx')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
-    # Gửi yêu cầu chuyển đổi
     response = await word_service.upload_file(
         "/documents/convert/to-pdf",
         file=file
@@ -87,7 +83,6 @@ async def apply_word_template(
     - **data**: Dữ liệu JSON cho mẫu (dạng chuỗi JSON)
     - **output_format**: Định dạng đầu ra (docx, pdf)
     """
-    # Gửi yêu cầu áp dụng mẫu
     response = await word_service.post(
         "/documents/templates/apply",
         json={
@@ -115,11 +110,9 @@ async def add_watermark_to_word(
     - **position**: Vị trí của watermark (center, top-left, top-right, bottom-left, bottom-right)
     - **opacity**: Độ mờ của watermark (0.0 - 1.0)
     """
-    # Kiểm tra loại file
     if not file.filename.endswith(('.doc', '.docx')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
-    # Gửi yêu cầu thêm watermark
     response = await word_service.upload_file(
         "/documents/watermark",
         file=file,
@@ -155,7 +148,6 @@ async def download_word_document(document_id: str):
     """
     Tải xuống tài liệu Word theo ID.
     """
-    # Gửi yêu cầu tải xuống
     return await word_service.get_file(f"/documents/download/{document_id}")
 
 
@@ -181,7 +173,6 @@ async def create_batch_word_documents(
     - **data_file**: File dữ liệu CSV hoặc Excel
     - **output_format**: Định dạng đầu ra (docx, pdf, zip)
     """
-    # Kiểm tra loại file
     if not data_file.filename.endswith(('.csv', '.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .csv, .xlsx hoặc .xls")
 

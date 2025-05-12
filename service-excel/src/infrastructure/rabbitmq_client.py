@@ -26,14 +26,12 @@ class RabbitMQClient:
             settings.RABBITMQ_PASS
         )
 
-        # Các queue mặc định
         self.QUEUE_CONVERT_TO_PDF = "excel_service.convert_to_pdf"
         self.QUEUE_CONVERT_TO_WORD = "excel_service.convert_to_word"
         self.QUEUE_MERGE_DOCUMENTS = "excel_service.merge_documents"
         self.QUEUE_APPLY_TEMPLATE = "excel_service.apply_template"
         self.QUEUE_BATCH_PROCESSING = "excel_service.batch_processing"
 
-        # Khởi tạo logger
         self.logger = logging.getLogger("rabbitmq_client")
 
     def _get_connection(self) -> pika.BlockingConnection:
@@ -65,7 +63,6 @@ class RabbitMQClient:
         if self.channel is None or self.channel.is_closed:
             self.channel = self._get_connection().channel()
 
-            # Đảm bảo các queue tồn tại
             self.channel.queue_declare(queue=self.QUEUE_CONVERT_TO_PDF, durable=True)
             self.channel.queue_declare(queue=self.QUEUE_CONVERT_TO_WORD, durable=True)
             self.channel.queue_declare(queue=self.QUEUE_MERGE_DOCUMENTS, durable=True)
@@ -89,7 +86,7 @@ class RabbitMQClient:
                 routing_key=queue,
                 body=json.dumps(message),
                 properties=pika.BasicProperties(
-                    delivery_mode=2,  # Persistent message
+                    delivery_mode=2,  
                     content_type='application/json'
                 )
             )
@@ -108,18 +105,14 @@ class RabbitMQClient:
 
         def _callback(ch, method, properties, body):
             try:
-                # Parse JSON message
                 message = json.loads(body)
 
-                # Gọi callback
                 callback(message)
 
-                # Acknowledge message
                 ch.basic_ack(delivery_tag=method.delivery_tag)
             except Exception as e:
                 self.logger.error(f"Lỗi khi xử lý tin nhắn: {str(e)}")
 
-                # Nack message và requeue
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
         try:
@@ -127,7 +120,6 @@ class RabbitMQClient:
             channel.basic_qos(prefetch_count=1)
             channel.basic_consume(queue=queue, on_message_callback=_callback)
 
-            # Bắt đầu consuming trong thread riêng
             thread = threading.Thread(target=channel.start_consuming)
             thread.daemon = True
             thread.start()

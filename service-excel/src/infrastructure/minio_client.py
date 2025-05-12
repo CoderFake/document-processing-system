@@ -24,10 +24,9 @@ class MinioClient:
                 f"{settings.MINIO_HOST}:{settings.MINIO_PORT}",
                 access_key=settings.MINIO_ACCESS_KEY,
                 secret_key=settings.MINIO_SECRET_KEY,
-                secure=False  # Sử dụng HTTP thay vì HTTPS
+                secure=False  
             )
 
-            # Đảm bảo bucket tồn tại
             self._ensure_bucket_exists(settings.MINIO_EXCEL_BUCKET)
             self._ensure_bucket_exists(settings.MINIO_TEMPLATES_BUCKET)
         except Exception as e:
@@ -58,10 +57,8 @@ class MinioClient:
             Object path trong MinIO
         """
         try:
-            # Tạo tên file duy nhất
             object_name = f"{datetime.now().strftime('%Y-%m-%d')}/{str(uuid.uuid4())}/{filename}"
 
-            # Upload file
             self.client.put_object(
                 bucket_name=settings.MINIO_EXCEL_BUCKET,
                 object_name=object_name,
@@ -87,10 +84,8 @@ class MinioClient:
             Object path trong MinIO
         """
         try:
-            # Tạo tên file duy nhất
             object_name = f"{datetime.now().strftime('%Y-%m-%d')}/{str(uuid.uuid4())}/{filename}"
 
-            # Upload file
             self.client.put_object(
                 bucket_name=settings.MINIO_TEMPLATES_BUCKET,
                 object_name=object_name,
@@ -115,13 +110,11 @@ class MinioClient:
             Nội dung file dưới dạng bytes
         """
         try:
-            # Tải xuống file
             response = self.client.get_object(
                 bucket_name=settings.MINIO_EXCEL_BUCKET,
                 object_name=object_name
             )
 
-            # Đọc nội dung
             content = response.read()
             response.close()
             response.release_conn()
@@ -141,13 +134,11 @@ class MinioClient:
             Nội dung file dưới dạng bytes
         """
         try:
-            # Tải xuống file
             response = self.client.get_object(
                 bucket_name=settings.MINIO_TEMPLATES_BUCKET,
                 object_name=object_name
             )
 
-            # Đọc nội dung
             content = response.read()
             response.close()
             response.release_conn()

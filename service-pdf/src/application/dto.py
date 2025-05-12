@@ -49,9 +49,9 @@ class WatermarkPdfDTO(BaseModel):
     """
     document_id: str
     watermark_text: str
-    position: str = "center"  # center, top-left, top-right, bottom-left, bottom-right
+    position: str = "center"
     opacity: float = 0.5
-    color: Optional[str] = "#808080"  # Gray
+    color: Optional[str] = "
     font_size: Optional[int] = 40
 
 class SignPdfDTO(BaseModel):
@@ -60,8 +60,8 @@ class SignPdfDTO(BaseModel):
     """
     document_id: str
     stamp_id: Optional[str] = None
-    signature_position: str = "bottom-right"  # bottom-right, bottom-left, top-right, top-left, custom
-    page_number: int = -1  # -1 for last page
+    signature_position: str = "bottom-right"
+    page_number: int = -1  
     custom_x: Optional[int] = None
     custom_y: Optional[int] = None
     scale: float = 0.5
@@ -78,23 +78,23 @@ class CrackPdfDTO(BaseModel):
     DTO để crack mật khẩu PDF.
     """
     document_id: str
-    max_length: int = 6  # Độ dài tối đa của mật khẩu để thử
+    max_length: int = 6
 
 class ConvertPdfToWordDTO(BaseModel):
     """
     DTO để chuyển đổi PDF sang Word.
     """
     document_id: str
-    output_format: str = "docx"  # docx, doc
+    output_format: str = "docx"
 
 class ConvertPdfToImageDTO(BaseModel):
     """
     DTO để chuyển đổi PDF sang hình ảnh.
     """
     document_id: str
-    output_format: str = "png"  # png, jpg
+    output_format: str = "png"  
     dpi: int = 300
-    page_numbers: Optional[List[int]] = None  # None = tất cả các trang
+    page_numbers: Optional[List[int]] = None
 
 class DocumentFilterDTO(BaseModel):
     """

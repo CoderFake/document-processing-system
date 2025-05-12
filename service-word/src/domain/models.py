@@ -49,7 +49,7 @@ class BatchProcessingInfo(BaseModel):
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     template_id: str
-    status: str = "processing"  # processing, completed, failed
+    status: str = "processing"  
     created_at: datetime = Field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     total_documents: int = 0

@@ -119,14 +119,11 @@ class ServiceClient:
         url = f"{self.base_url}{endpoint}"
 
         try:
-            # Đảm bảo file pointer ở đầu file
             await file.seek(0)
             file_content = await file.read()
 
-            # Chuẩn bị form data
             files = {"file": (file.filename, file_content, file.content_type)}
 
-            # Tạo multipart form
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(url, files=files, data=data)
 
@@ -155,24 +152,20 @@ class ServiceClient:
         url = f"{self.base_url}{endpoint}"
 
         try:
-            # Xử lý các file
             files_to_upload = {}
 
             if isinstance(files, list):
-                # Nếu là danh sách file
                 for i, file in enumerate(files):
                     await file.seek(0)
                     file_content = await file.read()
                     files_to_upload[f"file_{i}"] = (file.filename, file_content, file.content_type)
             else:
-                # Nếu là dict file
                 for key, file in files.items():
-                    if file is not None:  # Kiểm tra để tránh lỗi với file là None
+                    if file is not None:  
                         await file.seek(0)
                         file_content = await file.read()
                         files_to_upload[key] = (file.filename, file_content, file.content_type)
 
-            # Tạo multipart form
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(url, files=files_to_upload, data=data)
 
@@ -206,11 +199,9 @@ class ServiceClient:
                         'content-type') == 'application/json' else response.text
                     raise HTTPException(status_code=response.status_code, detail=error_detail)
 
-                # Lấy thông tin từ header response
                 content_type = response.headers.get("content-type", "application/octet-stream")
                 content_disposition = response.headers.get("content-disposition", "")
 
-                # Tạo StreamingResponse
                 return StreamingResponse(
                     io.BytesIO(response.content),
                     media_type=content_type,

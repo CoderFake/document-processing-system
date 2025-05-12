@@ -18,7 +18,6 @@ from infrastructure.rabbitmq_client import RabbitMQClient
 router = APIRouter()
 
 
-# Khởi tạo dependencies
 def get_document_service():
     minio_client = MinioClient()
     rabbitmq_client = RabbitMQClient()
@@ -33,7 +32,6 @@ def get_template_service():
     return TemplateService(template_repo, minio_client, rabbitmq_client)
 
 
-# Routes cho tài liệu Word
 @router.get("/documents", summary="Lấy danh sách tài liệu Word")
 async def get_documents(
         skip: int = 0,
@@ -63,25 +61,20 @@ async def upload_document(
     Tải lên tài liệu Word mới vào hệ thống.
     """
     try:
-        # Kiểm tra loại file
         if not file.filename.endswith(('.doc', '.docx')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
-        # Tạo DTO và lưu tài liệu
         document_dto = CreateDocumentDTO(
             title=title or os.path.splitext(file.filename)[0],
             description=description or "",
             original_filename=file.filename
         )
 
-        # Đọc nội dung file
         content = await file.read()
 
-        # Lưu tài liệu
         document_info = await document_service.create_document(document_dto, content)
 
         if background_tasks:
-            # Thêm tác vụ nền (nếu cần)
             background_tasks.add_task(
                 document_service.process_document_async,
                 document_info.id
@@ -110,14 +103,11 @@ async def convert_to_pdf(
     Chuyển đổi tài liệu Word sang định dạng PDF.
     """
     try:
-        # Kiểm tra loại file
         if not file.filename.endswith(('.doc', '.docx')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
-        # Đọc nội dung file
         content = await file.read()
 
-        # Chuyển đổi tài liệu
         result = await document_service.convert_to_pdf(content, file.filename)
 
         return {
@@ -147,21 +137,17 @@ async def add_watermark(
     - **opacity**: Độ mờ của watermark (0.0 - 1.0)
     """
     try:
-        # Kiểm tra loại file
         if not file.filename.endswith(('.doc', '.docx')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
-        # Đọc nội dung file
         content = await file.read()
 
-        # Tạo DTO cho watermark
         watermark_dto = WatermarkDTO(
             text=watermark_text,
             position=position,
             opacity=opacity
         )
 
-        # Thêm watermark
         result = await document_service.add_watermark(content, file.filename, watermark_dto)
 
         return {
@@ -206,17 +192,14 @@ async def apply_template(
     - **output_format**: Định dạng đầu ra (docx, pdf)
     """
     try:
-        # Parse JSON data
         json_data = json.loads(data)
 
-        # Tạo DTO
         template_data_dto = TemplateDataDTO(
             template_id=template_id,
             data=json_data,
             output_format=output_format
         )
 
-        # Áp dụng mẫu
         result = await template_service.apply_template(template_data_dto)
 
         return {
@@ -247,14 +230,11 @@ async def create_batch_documents(
     - **output_format**: Định dạng đầu ra (docx, pdf, zip)
     """
     try:
-        # Kiểm tra loại file
         if not data_file.filename.endswith(('.csv', '.xlsx', '.xls')):
             raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .csv, .xlsx hoặc .xls")
 
-        # Đọc nội dung file
         content = await data_file.read()
 
-        # Thực hiện batch processing - đây là tác vụ nặng nên thực hiện bất đồng bộ
         task_id = str(uuid.uuid4())
 
         if background_tasks:
@@ -285,15 +265,12 @@ async def download_document(
     Tải xuống tài liệu Word theo ID.
     """
     try:
-        # Tải tài liệu
         document_info, document_content = await document_service.get_document(document_id)
 
-        # Tạo file tạm
         with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{document_info.original_filename}") as temp:
             temp.write(document_content)
             temp_path = temp.name
 
-        # Trả về file response
         return FileResponse(
             path=temp_path,
             filename=document_info.original_filename,
