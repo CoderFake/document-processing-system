@@ -26,7 +26,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         HTTPException: Nếu token không hợp lệ hoặc người dùng không tồn tại
     """
     try:
-        response = await user_service.post("/users/validate-token", {"token": token})
+        response = await user_service.post("/api/v1/auth/validate-token", {"token": token})
         return response
     except HTTPException as e:
         if e.status_code == 401:
@@ -49,7 +49,7 @@ async def register(
     Đăng ký người dùng mới.
     """
     try:
-        response = await user_service.post("/users/register", {
+        response = await user_service.post("/api/v1/auth/register", {
             "username": username,
             "email": email,
             "password": password,
@@ -66,7 +66,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     Đăng nhập và nhận token JWT.
     """
     try:
-        response = await user_service.post("/users/login", {
+        response = await user_service.post("/api/v1/auth/login", {
             "username": form_data.username,
             "password": form_data.password
         })
@@ -87,7 +87,7 @@ async def refresh_token(refresh_token: str):
     Làm mới token JWT bằng refresh token.
     """
     try:
-        response = await user_service.post("/users/refresh-token", {"refresh_token": refresh_token})
+        response = await user_service.post("/api/v1/auth/refresh-token", {"refresh_token": refresh_token})
         return response
     except HTTPException as e:
         if e.status_code == 401:
@@ -105,7 +105,7 @@ async def logout(refresh_token: str):
     Đăng xuất người dùng.
     """
     try:
-        response = await user_service.post("/users/logout", {"refresh_token": refresh_token})
+        response = await user_service.post("/api/v1/auth/logout", {"refresh_token": refresh_token})
         return response
     except HTTPException as e:
         raise e

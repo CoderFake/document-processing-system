@@ -8,22 +8,129 @@ import rarfile
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple, BinaryIO
 
-from domain.models import ArchiveInfo, ArchiveFormat, FileEntryInfo, ExtractedArchiveInfo, ArchiveProcessingInfo
+from domain.models import ArchiveInfo, ArchiveFormat, FileEntryInfo, ExtractedArchiveInfo, ArchiveProcessingInfo, FileInfo
 from domain.exceptions import (
     ArchiveNotFoundException, InvalidFileFormatException, StorageException,
     CompressionException, ExtractionException, UnsupportedFormatException,
     PasswordProtectedException, WrongPasswordException, CrackPasswordException,
-    InvalidArchiveException, FileTooLargeException
+    InvalidArchiveException, FileTooLargeException, FileNotFoundException
 )
-from infrastructure.repository import ArchiveRepository, ProcessingRepository
+from infrastructure.repository import ArchiveRepository, ProcessingRepository, FileRepository
 from infrastructure.minio_client import MinioClient
 from infrastructure.rabbitmq_client import RabbitMQClient
 from application.dto import (
     CreateArchiveDTO, ExtractArchiveDTO, CompressFilesDTO, AddFilesToArchiveDTO,
     RemoveFilesFromArchiveDTO, EncryptArchiveDTO, DecryptArchiveDTO,
-    CrackArchiveDTO, ConvertArchiveDTO
+    CrackArchiveDTO, ConvertArchiveDTO, CreateFileDTO, FileFilterDTO
 )
 from core.config import settings
+
+
+class FileService:
+    def __init__(
+        self,
+        file_repo: FileRepository,
+        minio_client: MinioClient,
+        rabbitmq_client: RabbitMQClient
+    ):
+        self.file_repo = file_repo
+        self.minio_client = minio_client
+        self.rabbitmq_client = rabbitmq_client
+
+    async def create_file(self, dto: CreateFileDTO, content: bytes) -> FileInfo:
+        """Tạo tệp mới."""
+        # Kiểm tra dung lượng
+        if len(content) > settings.MAX_UPLOAD_SIZE:
+            raise FileTooLargeException(len(content), settings.MAX_UPLOAD_SIZE)
+            
+        # Tạo ID duy nhất
+        file_id = str(uuid.uuid4())
+        
+        # Xác định kiểu tệp
+        file_type = self._get_file_type(dto.original_filename)
+        
+        # Tạo thông tin tệp
+        file_info = FileInfo(
+            id=file_id,
+            title=dto.title,
+            description=dto.description,
+            file_size=len(content),
+            file_type=file_type,
+            original_filename=dto.original_filename,
+            storage_path="",  # Được cập nhật sau khi lưu
+            metadata=dto.metadata
+        )
+        
+        # Lưu tệp
+        storage_path = await self.file_repo.save_file(file_id, content)
+        file_info.storage_path = storage_path
+        
+        # Lưu thông tin tệp vào repository
+        await self.file_repo.create_file(file_info)
+        
+        return file_info
+
+    async def get_files(self, skip: int = 0, limit: int = 10, filter_dto: Optional[FileFilterDTO] = None) -> List[FileInfo]:
+        """Lấy danh sách tệp."""
+        return await self.file_repo.get_files(skip, limit, filter_dto)
+
+    async def get_file(self, file_id: str) -> Tuple[FileInfo, bytes]:
+        """Lấy thông tin và nội dung tệp."""
+        file_info = await self.file_repo.get_file(file_id)
+        if not file_info:
+            raise FileNotFoundException(file_id)
+        
+        content = await self.file_repo.get_file_content(file_id)
+        return file_info, content
+
+    async def update_file(self, file_id: str, dto: CreateFileDTO) -> FileInfo:
+        """Cập nhật thông tin tệp."""
+        file_info = await self.file_repo.get_file(file_id)
+        if not file_info:
+            raise FileNotFoundException(file_id)
+        
+        file_info.title = dto.title
+        file_info.description = dto.description
+        file_info.updated_at = datetime.now()
+        file_info.metadata = dto.metadata
+        
+        await self.file_repo.update_file(file_info)
+        return file_info
+
+    async def delete_file(self, file_id: str) -> None:
+        """Xóa tệp."""
+        await self.file_repo.delete_file(file_id)
+
+    def _get_file_type(self, filename: str) -> str:
+        """Xác định kiểu tệp từ tên tệp."""
+        _, extension = os.path.splitext(filename)
+        return extension.lower().lstrip('.')
+
+
+class TrashService:
+    def __init__(
+        self,
+        file_repo: FileRepository,
+        minio_client: MinioClient
+    ):
+        self.file_repo = file_repo
+        self.minio_client = minio_client
+
+    async def move_to_trash(self, file_id: str) -> None:
+        """Di chuyển tệp vào thùng rác."""
+        await self.file_repo.move_to_trash(file_id)
+
+    async def restore_from_trash(self, file_id: str) -> None:
+        """Khôi phục tệp từ thùng rác."""
+        await self.file_repo.restore_from_trash(file_id)
+
+    async def get_trash_items(self, skip: int = 0, limit: int = 10) -> List[FileInfo]:
+        """Lấy danh sách tệp trong thùng rác."""
+        return await self.file_repo.get_trash_items(skip, limit)
+
+    async def empty_trash(self) -> int:
+        """Làm trống thùng rác."""
+        return await self.file_repo.empty_trash()
 
 
 class ArchiveService:

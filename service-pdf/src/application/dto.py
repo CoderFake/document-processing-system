@@ -51,7 +51,7 @@ class WatermarkPdfDTO(BaseModel):
     watermark_text: str
     position: str = "center"
     opacity: float = 0.5
-    color: Optional[str] = "
+    color: Optional[str] = "red"
     font_size: Optional[int] = 40
 
 class SignPdfDTO(BaseModel):

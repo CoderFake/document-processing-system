@@ -1,6 +1,6 @@
 import json
 import pika
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 import asyncio
 import threading
 import logging

@@ -17,6 +17,32 @@ class UserRegisterDTO(BaseModel):
         return v
 
 
+class UserCreateDTO(BaseModel):
+    """DTO cho tạo người dùng mới."""
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    full_name: Optional[str] = None
+    is_active: Optional[bool] = True
+    is_verified: Optional[bool] = False
+    
+    @validator('username')
+    def username_alphanumeric(cls, v):
+        if not v.isalnum():
+            raise ValueError('Username chỉ được chứa ký tự chữ và số')
+        return v
+
+
+class UserUpdateDTO(BaseModel):
+    """DTO cho cập nhật thông tin người dùng."""
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(None, min_length=8)
+    full_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_verified: Optional[bool] = None
+    profile_image: Optional[str] = None
+
+
 class UserLoginDTO(BaseModel):
     """DTO cho đăng nhập."""
     username: str
@@ -59,12 +85,18 @@ class UserDetailsResponseDTO(UserResponseDTO):
     """DTO cho phản hồi thông tin chi tiết người dùng."""
     permissions: List[Dict[str, str]]
     profile_image: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    user_metadata: Optional[Dict[str, Any]] = None
 
 
 class RoleCreateDTO(BaseModel):
     """DTO cho tạo vai trò mới."""
     name: str = Field(..., min_length=3, max_length=50)
+    description: Optional[str] = None
+
+
+class RoleUpdateDTO(BaseModel):
+    """DTO cho cập nhật vai trò."""
+    name: Optional[str] = Field(None, min_length=3, max_length=50)
     description: Optional[str] = None
 
 

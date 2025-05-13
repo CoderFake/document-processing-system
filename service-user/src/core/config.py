@@ -9,11 +9,12 @@ class Settings(BaseSettings):
     PROJECT_VERSION: str = "1.0.0"
 
     HOST: str = "0.0.0.0"
-    PORT: int = 6005
-    DEBUG_MODE: bool = os.getenv("APP_ENV", "development") == "development"
+    PORT: int = 10005
+    DEBUG: bool = os.getenv("APP_ENV", "development") == "development"
     WORKERS: int = 1
 
-    ALLOWED_ORIGINS: List[str] = ["*"]
+    API_V1_STR: str = "/api/v1"
+    CORS_ORIGINS: List[str] = ["*"]
 
     # Database settings
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/users")
@@ -45,4 +46,4 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-os.makedirs(os.path.join(os.path.dirname(__file__), "../logs"), exist_ok=True) 
+os.makedirs(os.path.join(os.path.dirname(__file__), "../../logs"), exist_ok=True) 

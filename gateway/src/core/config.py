@@ -9,17 +9,17 @@ class Settings(BaseSettings):
     PROJECT_VERSION: str = "1.0.0"
 
     HOST: str = "0.0.0.0"
-    PORT: int = 6000
+    PORT: int = 10000
     DEBUG_MODE: bool = os.getenv("APP_ENV", "development") == "development"
     WORKERS: int = 4
 
     ALLOWED_ORIGINS: List[str] = ["*"]
 
-    WORD_SERVICE_URL: str = os.getenv("WORD_SERVICE_URL", "http://service-word:6001")
-    EXCEL_SERVICE_URL: str = os.getenv("EXCEL_SERVICE_URL", "http://service-excel:6002")
-    PDF_SERVICE_URL: str = os.getenv("PDF_SERVICE_URL", "http://service-pdf:6003")
-    FILES_SERVICE_URL: str = os.getenv("FILES_SERVICE_URL", "http://service-files:6004")
-    USER_SERVICE_URL: str = os.getenv("USER_SERVICE_URL", "http://service-user:6005")
+    WORD_SERVICE_URL: str = os.getenv("WORD_SERVICE_URL", "http://service-word:10001")
+    EXCEL_SERVICE_URL: str = os.getenv("EXCEL_SERVICE_URL", "http://service-excel:10002")
+    PDF_SERVICE_URL: str = os.getenv("PDF_SERVICE_URL", "http://service-pdf:10003")
+    FILES_SERVICE_URL: str = os.getenv("FILES_SERVICE_URL", "http://service-files:10004")
+    USER_SERVICE_URL: str = os.getenv("USER_SERVICE_URL", "http://service-user:10005")
 
     RABBITMQ_HOST: str = os.getenv("RABBITMQ_HOST", "rabbitmq")
     RABBITMQ_PORT: int = 5672

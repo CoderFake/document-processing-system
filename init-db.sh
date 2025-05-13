@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_login TIMESTAMP,
     profile_image VARCHAR(255),
-    metadata TEXT
+    user_metadata TEXT
 );
 
 CREATE TABLE IF NOT EXISTS roles (

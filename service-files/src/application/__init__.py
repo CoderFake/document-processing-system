@@ -5,7 +5,7 @@ from application.dto import (
     CrackArchivePasswordDTO, CleanupFilesDTO, RestoreTrashDTO, FileFilterDTO
 )
 
-from application.services import ArchiveService
+from application.services import ArchiveService, FileService, TrashService
 
 __all__ = [
     "CreateFileDTO",
@@ -23,5 +23,7 @@ __all__ = [
     "CleanupFilesDTO",
     "RestoreTrashDTO",
     "FileFilterDTO",
-    "ArchiveService"
+    "ArchiveService",
+    "FileService",
+    "TrashService"
 ] 

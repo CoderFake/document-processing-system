@@ -37,7 +37,7 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
     profile_image = Column(String(255), nullable=True)
-    metadata = Column(Text, nullable=True)
+    user_metadata = Column(Text, nullable=True)
 
     roles = relationship("Role", secondary=user_roles, back_populates="users")
 

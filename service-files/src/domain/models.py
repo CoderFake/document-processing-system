@@ -14,6 +14,43 @@ class ArchiveFormat(str, Enum):
     TAR_GZIP = "tar.gz"
 
 
+class FileInfo:
+    id: str
+    title: str
+    description: str
+    created_at: datetime
+    updated_at: Optional[datetime]
+    file_size: int
+    file_type: str
+    original_filename: str
+    storage_path: str
+    metadata: Dict[str, Any]
+
+    def __init__(
+        self,
+        id: str,
+        title: str,
+        description: str,
+        file_size: int,
+        file_type: str,
+        original_filename: str,
+        storage_path: str,
+        created_at: Optional[datetime] = None,
+        updated_at: Optional[datetime] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        self.id = id
+        self.title = title
+        self.description = description
+        self.file_size = file_size
+        self.file_type = file_type
+        self.original_filename = original_filename
+        self.storage_path = storage_path
+        self.created_at = created_at or datetime.now()
+        self.updated_at = updated_at
+        self.metadata = metadata or {}
+
+
 class ArchiveInfo:
     id: str
     title: str

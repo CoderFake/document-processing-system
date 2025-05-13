@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     PROJECT_VERSION: str = "1.0.0"
 
     HOST: str = "0.0.0.0"
-    PORT: int = 6001
+    PORT: int = 10001
     DEBUG_MODE: bool = os.getenv("APP_ENV", "development") == "development"
     WORKERS: int = 1
 

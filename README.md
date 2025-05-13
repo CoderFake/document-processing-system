@@ -6,12 +6,12 @@ Hệ thống xử lý tài liệu đa dạng với kiến trúc microservices, h
 
 Hệ thống bao gồm các thành phần sau:
 
-- **Gateway API (6000)**: Cổng giao tiếp chính với người dùng, điều phối yêu cầu đến các dịch vụ.
-- **Word Service (6001)**: Xử lý tài liệu Word/DOCX, cung cấp gRPC API để chuyển đổi định dạng.
-- **Excel Service (6002)**: Xử lý tài liệu Excel/XLSX, hỗ trợ phân tích và chuyển đổi dữ liệu.
-- **PDF Service (6003)**: Xử lý tài liệu PDF và hình ảnh PNG, JPG.
-- **Files Service (6004)**: Xử lý nén/giải nén và quản lý các tệp tin đa dạng.
-- **User Service (6005)**: Quản lý người dùng, xác thực và phân quyền.
+- **Gateway API (10000)**: Cổng giao tiếp chính với người dùng, điều phối yêu cầu đến các dịch vụ.
+- **Word Service (10001)**: Xử lý tài liệu Word/DOCX, cung cấp gRPC API để chuyển đổi định dạng.
+- **Excel Service (10002)**: Xử lý tài liệu Excel/XLSX, hỗ trợ phân tích và chuyển đổi dữ liệu.
+- **PDF Service (10003)**: Xử lý tài liệu PDF và hình ảnh PNG, JPG.
+- **Files Service (10004)**: Xử lý nén/giải nén và quản lý các tệp tin đa dạng.
+- **User Service (10005)**: Quản lý người dùng, xác thực và phân quyền.
 - **PostgreSQL (6006)**: Cơ sở dữ liệu quan hệ để lưu trữ dữ liệu người dùng và metadata.
 - **RabbitMQ**: Hệ thống hàng đợi tin nhắn để xử lý công việc bất đồng bộ.
 - **MinIO**: Lưu trữ đối tượng tương thích S3 để lưu trữ tài liệu.
@@ -94,12 +94,12 @@ chmod +x start.sh
 
 Sau khi khởi động, có thể truy cập các API bằng Swagger UI:
 
-- Gateway API: http://localhost:6000/docs
-- Word Service: http://localhost:6001/docs
-- Excel Service: http://localhost:6002/docs
-- PDF Service: http://localhost:6003/docs
-- Files Service: http://localhost:6004/docs
-- User Service: http://localhost:6005/docs
+- Gateway API: http://localhost:10000/docs
+- Word Service: http://localhost:10001/docs
+- Excel Service: http://localhost:10002/docs
+- PDF Service: http://localhost:10003/docs
+- Files Service: http://localhost:10004/docs
+- User Service: http://localhost:10005/docs
 
 ## Quản trị hệ thống
 
