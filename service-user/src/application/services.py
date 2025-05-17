@@ -221,4 +221,87 @@ class AuthService:
             raise RoleNotFoundException(f"Role with ID {role_id} not found")
         
         await self.user_repository.remove_role_from_user(user, role)
-        return True 
+        return True
+        
+    async def create_refresh_token(self, user_id: int) -> str:
+        """Tạo refresh token mới cho user.
+        
+        Args:
+            user_id: ID của người dùng
+            
+        Returns:
+            Chuỗi refresh token
+        """
+        from application.security import create_refresh_token as create_token
+        from datetime import datetime, timedelta
+        
+        # Tạo refresh token mới
+        token_str = create_token()
+        expires_at = datetime.utcnow() + timedelta(days=30)  # Mặc định hết hạn sau 30 ngày
+        
+        # Tạo đối tượng RefreshToken
+        refresh_token = RefreshToken(
+            token=token_str,
+            user_id=user_id,
+            expires_at=expires_at,
+            created_at=datetime.utcnow()
+        )
+        
+        # Lưu vào database
+        await self.token_repository.create_refresh_token(refresh_token)
+        
+        return token_str
+        
+    async def verify_refresh_token(self, token_str: str):
+        """Xác minh refresh token.
+        
+        Args:
+            token_str: Chuỗi refresh token
+            
+        Returns:
+            TokenData nếu refresh token hợp lệ
+            
+        Raises:
+            ValueError: Nếu refresh token không hợp lệ hoặc đã hết hạn
+        """
+        # Lấy refresh token từ database
+        refresh_token = await self.token_repository.get_refresh_token(token_str)
+        if not refresh_token:
+            raise ValueError("Invalid refresh token")
+            
+        # Kiểm tra xem refresh token có hết hạn chưa
+        if refresh_token.expires_at < datetime.utcnow():
+            # Thu hồi refresh token nếu đã hết hạn
+            await self.token_repository.revoke_refresh_token(token_str)
+            raise ValueError("Refresh token expired")
+            
+        # Tạo và trả về dữ liệu token
+        return TokenData(
+            user_id=refresh_token.user_id,
+            username="",  # Không cần thiết cho refresh token
+            roles=[],     # Không cần thiết cho refresh token
+            permissions=[],  # Không cần thiết cho refresh token
+            exp=refresh_token.expires_at
+        )
+        
+    async def revoke_refresh_token(self, token_str: str) -> bool:
+        """Thu hồi refresh token.
+        
+        Args:
+            token_str: Chuỗi refresh token
+            
+        Returns:
+            True nếu thu hồi thành công, ngược lại False
+        """
+        return await self.token_repository.revoke_refresh_token(token_str)
+        
+    async def revoke_all_user_tokens(self, user_id: int) -> int:
+        """Thu hồi tất cả refresh token của user.
+        
+        Args:
+            user_id: ID của người dùng
+            
+        Returns:
+            Số lượng refresh token đã thu hồi
+        """
+        return await self.token_repository.revoke_all_user_tokens(user_id) 

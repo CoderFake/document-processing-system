@@ -139,7 +139,8 @@ async def validate_token(
 @router.post("/auth/refresh-token", response_model=TokenResponseDTO, tags=["auth"])
 async def refresh_token(
     refresh_token: Dict[str, str],
-    auth_service: AuthService = Depends(get_auth_service)
+    auth_service: AuthService = Depends(get_auth_service),
+    user_service: UserService = Depends(get_user_service)
 ):
     """
     Làm mới token JWT bằng refresh token.
@@ -156,7 +157,16 @@ async def refresh_token(
         token_data = await auth_service.verify_refresh_token(token_str)
         user_id = token_data.user_id
         
-        access_token = create_access_token({"sub": user_id})
+        # Lấy thông tin người dùng từ ID
+        user = await user_service.get_user(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        access_token = create_access_token(user)
         new_refresh_token = await auth_service.create_refresh_token(user_id)
         
         await auth_service.revoke_refresh_token(token_str)

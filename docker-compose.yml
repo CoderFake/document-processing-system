@@ -225,6 +225,21 @@ services:
       - document-network
     restart: always
 
+  minio-init:
+    build:
+      context: ./minio-init
+      dockerfile: Dockerfile
+    environment:
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    depends_on:
+      - minio
+    networks:
+      - document-network
+    restart: on-failure
+
   # Dịch vụ khởi tạo cơ sở dữ liệu
   db-init:
     image: postgres:15-alpine

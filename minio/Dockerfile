@@ -1,11 +1,9 @@
-FROM minio/minio:latest
+FROM python:3.10-slim
 
-ENV MINIO_ROOT_USER=minioadmin
-ENV MINIO_ROOT_PASSWORD=minioadmin
+WORKDIR /app
 
-RUN mkdir -p /data
+RUN pip install --no-cache-dir minio
 
-EXPOSE 9000
-EXPOSE 9001
+COPY init-minio-buckets.py .
 
-ENTRYPOINT ["minio", "server", "/data", "--console-address", ":9001"]
+CMD ["python", "init-minio-buckets.py"]

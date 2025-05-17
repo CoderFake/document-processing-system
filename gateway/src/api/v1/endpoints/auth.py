@@ -66,11 +66,24 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     Đăng nhập và nhận token JWT.
     """
     try:
-        response = await user_service.post("/api/v1/auth/login", {
-            "username": form_data.username,
-            "password": form_data.password
-        })
-        return response
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{settings.USER_SERVICE_URL}/api/v1/auth/login",
+                data={"username": form_data.username, "password": form_data.password},
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            
+            if response.status_code >= 400:
+                error_detail = response.json().get('detail', 'Lỗi không xác định') if response.headers.get(
+                    'content-type') == 'application/json' else response.text
+                raise HTTPException(status_code=response.status_code, detail=error_detail)
+            
+            return response.json()
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Lỗi kết nối đến service: {str(exc)}"
+        )
     except HTTPException as e:
         if e.status_code == 401:
             raise HTTPException(
@@ -79,7 +92,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
                 headers={"WWW-Authenticate": "Bearer"}
             )
         raise e
-
 
 @router.post("/refresh-token", summary="Làm mới token JWT")
 async def refresh_token(refresh_token: str):

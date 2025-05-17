@@ -40,25 +40,48 @@ def get_password_hash(password: str) -> str:
 
 
 def create_access_token(
-    user_id: int,
-    username: str,
-    roles: List[str],
-    permissions: List[Dict[str, str]],
+    user_or_id,
+    username: str = None,
+    roles: List[str] = None,
+    permissions: List[Dict[str, str]] = None,
     expires_delta: Optional[timedelta] = None
 ) -> str:
     """
     Tạo JWT access token.
     
     Args:
-        user_id: ID của người dùng
-        username: Tên người dùng
-        roles: Danh sách các vai trò của người dùng
-        permissions: Danh sách các quyền của người dùng
+        user_or_id: ID của người dùng hoặc đối tượng User
+        username: Tên người dùng (bắt buộc nếu user_or_id là ID)
+        roles: Danh sách các vai trò của người dùng (bắt buộc nếu user_or_id là ID)
+        permissions: Danh sách các quyền của người dùng (bắt buộc nếu user_or_id là ID)
         expires_delta: Thời gian tồn tại của token (nếu không được thiết lập, mặc định là 30 phút)
     
     Returns:
         JWT access token
     """
+    # Kiểm tra nếu tham số là object User
+    if hasattr(user_or_id, 'id'):
+        user = user_or_id
+        user_id = user.id
+        username = user.username
+        roles = [role.name for role in user.roles]
+        permissions = []
+        for role in user.roles:
+            for permission in role.permissions:
+                permissions.append({
+                    "resource": permission.resource,
+                    "action": permission.action
+                })
+    else:
+        # Nếu không phải User object, xử lý như trước đây
+        if isinstance(user_or_id, dict) and "sub" in user_or_id:
+            user_id = user_or_id["sub"]
+        else:
+            user_id = user_or_id
+            
+        if not username or not roles or not permissions:
+            raise ValueError("Nếu user_or_id không phải là User object, phải cung cấp username, roles và permissions")
+    
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
