@@ -391,7 +391,7 @@ class ArchiveService:
         if not dto.user_id:
             raise ValueError("User ID is required for compressing files.")
         
-        user_id = int(dto.user_id)
+        user_id = str(dto.user_id)
         
         temp_dir_path: Optional[str] = None
         created_archive_as_file_info: Optional[FileInfo] = None
