@@ -4,10 +4,13 @@ import tempfile
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import uuid
-import asyncpg
 import logging
 
-from domain.models import ExcelDocumentInfo, ExcelTemplateInfo, BatchProcessingInfo, MergeInfo
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import update as sqlalchemy_update, delete as sqlalchemy_delete, and_, func
+
+from domain.models import ExcelDocumentInfo, ExcelTemplateInfo, BatchProcessingInfo, MergeInfo, DBDocument
 from domain.exceptions import DocumentNotFoundException, TemplateNotFoundException, StorageException
 from infrastructure.minio_client import MinioClient
 from core.config import settings
@@ -21,14 +24,14 @@ class ExcelDocumentRepository:
     Repository để làm việc với tài liệu Excel, lưu trữ doc_metadata trong PostgreSQL.
     """
 
-    def __init__(self, pool: asyncpg.Pool):
+    def __init__(self, db_session_factory):
         """
         Khởi tạo repository.
 
         Args:
-            pool: Connection pool của AsyncPG
+            db_session_factory: SQLAlchemy async session factory
         """
-        self.pool = pool
+        self.async_session_factory = db_session_factory
 
     async def _get_sheet_info(self, content: bytes) -> Tuple[List[str], int]:
         """
@@ -75,183 +78,290 @@ class ExcelDocumentRepository:
             return None
 
     async def save(self, doc_info: ExcelDocumentInfo) -> ExcelDocumentInfo:
-        async with self.pool.acquire() as connection:
-            doc_info.id = doc_info.id or str(uuid.uuid4())
-            doc_info.storage_id = doc_info.storage_id or str(uuid.uuid4())
-            doc_info.created_at = doc_info.created_at or datetime.utcnow()
-            doc_info.updated_at = doc_info.updated_at or datetime.utcnow()
-            doc_info.version = doc_info.version or 1
-            doc_info.document_category = "excel"
+        async with self.async_session_factory() as session:
+            async with session.begin():
+                try:
+                    doc_info.id = doc_info.id or str(uuid.uuid4())
+                    doc_info.storage_id = doc_info.storage_id or str(uuid.uuid4())
+                    doc_info.created_at = doc_info.created_at or datetime.utcnow()
+                    doc_info.updated_at = doc_info.updated_at or datetime.utcnow()
+                    doc_info.version = doc_info.version or 1
+                    doc_info.document_category = "excel"
 
-            serialized_doc_metadata = await self._serialize_metadata(doc_info.doc_metadata)
+                    serialized_doc_metadata = await self._serialize_metadata(doc_info.doc_metadata)
 
-            query = f"""
-                INSERT INTO {DOCUMENTS_TABLE} (
-                    id, storage_id, document_category, title, description, 
-                    file_size, file_type, storage_path, original_filename, doc_metadata, 
-                    created_at, updated_at, user_id, version, checksum, sheet_count
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                ON CONFLICT (id) DO UPDATE SET
-                    title = EXCLUDED.title,
-                    description = EXCLUDED.description,
-                    file_size = EXCLUDED.file_size,
-                    file_type = EXCLUDED.file_type,
-                    storage_path = EXCLUDED.storage_path,
-                    original_filename = EXCLUDED.original_filename,
-                    doc_metadata = EXCLUDED.doc_metadata,
-                    updated_at = EXCLUDED.updated_at,
-                    user_id = EXCLUDED.user_id,
-                    version = EXCLUDED.version,
-                    checksum = EXCLUDED.checksum,
-                    sheet_count = EXCLUDED.sheet_count
-                RETURNING *;
-        """
-        try:
-            row = await connection.fetchrow(
-                query,
-                doc_info.id,
-                doc_info.storage_id,
-                doc_info.document_category,
-                doc_info.title,
-                doc_info.description,
-                doc_info.file_size,
-                doc_info.file_type,
-                doc_info.storage_path,
-                doc_info.original_filename,
-                serialized_doc_metadata,
-                doc_info.created_at,
-                doc_info.updated_at,
-                doc_info.user_id,
-                doc_info.version,
-                doc_info.checksum,
-                doc_info.sheet_count
-            )
-            if row:
-                saved_doc_info = ExcelDocumentInfo(**{k: v for k, v in row.items() if k != 'doc_metadata'})
-                saved_doc_info.doc_metadata = await self._deserialize_metadata(row.get('doc_metadata'))
-                logger.info(f"Saved/Updated document {saved_doc_info.id} for user {saved_doc_info.user_id}")
-                return saved_doc_info
-            else:
-                logger.error(f"Failed to save/update document {doc_info.id}, no row returned.")
-                raise StorageException(f"Failed to save/update document {doc_info.id}")
-        except asyncpg.UniqueViolationError as e:
-            logger.error(f"Unique constraint violation for doc {doc_info.id}: {e}")
-            raise StorageException(f"Error saving document due to unique constraint: {e}")
-        except Exception as e:
-            logger.error(f"Error saving/updating document {doc_info.id}: {e}", exc_info=True)
-            raise StorageException(f"Could not save/update document {doc_info.id}: {e}")
+                    # Check if document exists
+                    existing_query = select(DBDocument).where(DBDocument.id == doc_info.id)
+                    result = await session.execute(existing_query)
+                    existing_doc = result.scalar_one_or_none()
+
+                    if existing_doc:
+                        # Update existing document
+                        update_values = {
+                            'title': doc_info.title,
+                            'description': doc_info.description,
+                            'file_size': doc_info.file_size,
+                            'file_type': doc_info.file_type,
+                            'storage_path': doc_info.storage_path,
+                            'original_filename': doc_info.original_filename,
+                            'doc_metadata': serialized_doc_metadata,
+                            'updated_at': doc_info.updated_at,
+                            'user_id': doc_info.user_id,
+                            'version': doc_info.version,
+                            'checksum': doc_info.checksum,
+                            'sheet_count': doc_info.sheet_count
+                        }
+                        
+                        update_query = sqlalchemy_update(DBDocument).where(
+                            DBDocument.id == doc_info.id
+                        ).values(**update_values)
+                        
+                        await session.execute(update_query)
+                        await session.flush()
+                        
+                        # Refresh to get updated document
+                        await session.refresh(existing_doc)
+                        saved_doc = existing_doc
+                    else:
+                        # Create new document
+                        db_document = DBDocument(
+                            id=doc_info.id,
+                            storage_id=doc_info.storage_id,
+                            document_category=doc_info.document_category,
+                            title=doc_info.title,
+                            description=doc_info.description,
+                            file_size=doc_info.file_size,
+                            file_type=doc_info.file_type,
+                            storage_path=doc_info.storage_path,
+                            original_filename=doc_info.original_filename,
+                            doc_metadata=serialized_doc_metadata,
+                            created_at=doc_info.created_at,
+                            updated_at=doc_info.updated_at,
+                            user_id=doc_info.user_id,
+                            version=doc_info.version,
+                            checksum=doc_info.checksum,
+                            sheet_count=doc_info.sheet_count
+                        )
+                        
+                        session.add(db_document)
+                        await session.flush()
+                        await session.refresh(db_document)
+                        saved_doc = db_document
+
+                    # Convert back to ExcelDocumentInfo
+                    saved_doc_info = ExcelDocumentInfo(
+                        id=str(saved_doc.id),
+                        storage_id=str(saved_doc.storage_id),
+                        document_category=saved_doc.document_category,
+                        title=saved_doc.title,
+                        description=saved_doc.description,
+                        file_size=saved_doc.file_size,
+                        file_type=saved_doc.file_type,
+                        storage_path=saved_doc.storage_path,
+                        original_filename=saved_doc.original_filename,
+                        created_at=saved_doc.created_at,
+                        updated_at=saved_doc.updated_at,
+                        user_id=str(saved_doc.user_id),
+                        version=saved_doc.version,
+                        checksum=saved_doc.checksum,
+                        sheet_count=saved_doc.sheet_count
+                    )
+                    saved_doc_info.doc_metadata = await self._deserialize_metadata(saved_doc.doc_metadata)
+                    
+                    logger.info(f"Saved/Updated document {saved_doc_info.id} for user {saved_doc_info.user_id}")
+                    return saved_doc_info
+                    
+                except Exception as e:
+                    logger.error(f"Error saving/updating document {doc_info.id}: {e}", exc_info=True)
+                    raise StorageException(f"Could not save/update document {doc_info.id}: {e}")
 
     async def get_by_id(self, doc_id: str, user_id: str) -> Optional[ExcelDocumentInfo]:
-        async with self.pool.acquire() as connection:
-            query = f"SELECT * FROM {DOCUMENTS_TABLE} WHERE id = $1 AND user_id = $2 AND document_category = 'excel';"
-            row = await connection.fetchrow(query, doc_id, user_id)
-            if row:
-                doc_info = ExcelDocumentInfo(**{k: v for k, v in row.items() if k != 'doc_metadata'})
-                doc_info.doc_metadata = await self._deserialize_metadata(row.get('doc_metadata'))
-                return doc_info
-            return None
+        async with self.async_session_factory() as session:
+            try:
+                query = select(DBDocument).where(and_(
+                    DBDocument.id == doc_id,
+                    DBDocument.user_id == user_id,
+                    DBDocument.document_category == "excel"
+                ))
+                
+                result = await session.execute(query)
+                record = result.scalar_one_or_none()
+                
+                if record:
+                    doc_info = ExcelDocumentInfo(
+                        id=str(record.id),
+                        storage_id=str(record.storage_id),
+                        document_category=record.document_category,
+                        title=record.title,
+                        description=record.description,
+                        file_size=record.file_size,
+                        file_type=record.file_type,
+                        storage_path=record.storage_path,
+                        original_filename=record.original_filename,
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
+                        user_id=str(record.user_id),
+                        version=record.version,
+                        checksum=record.checksum,
+                        sheet_count=record.sheet_count
+                    )
+                    doc_info.doc_metadata = await self._deserialize_metadata(record.doc_metadata)
+                    return doc_info
+                
+                return None
+                
+            except Exception as e:
+                logger.error(f"Error getting document {doc_id}: {e}", exc_info=True)
+                return None
 
     async def list_by_user_id(
         self, user_id: str, skip: int = 0, limit: int = 20, 
         search_term: Optional[str] = None, sort_by: str = 'created_at', sort_order: str = 'desc'
     ) -> Tuple[List[ExcelDocumentInfo], int]:
-        async with self.pool.acquire() as connection:
-            base_query = f"FROM {DOCUMENTS_TABLE} WHERE user_id = $1 AND document_category = 'excel'"
-            params = [user_id]
-            param_idx = 2
+        async with self.async_session_factory() as session:
+            try:
+                # Build base query
+                query = select(DBDocument).where(and_(
+                    DBDocument.user_id == user_id,
+                    DBDocument.document_category == "excel"
+                ))
 
-            if search_term:
-                base_query += f" AND (title ILIKE ${param_idx} OR original_filename ILIKE ${param_idx})"
-                params.append(f"%{search_term}%")
-                param_idx += 1
+                if search_term:
+                    search_pattern = f"%{search_term}%"
+                    query = query.where(
+                        (func.lower(DBDocument.title).like(search_pattern.lower())) |
+                        (func.lower(DBDocument.original_filename).like(search_pattern.lower()))
+                    )
 
-            count_query = f"SELECT COUNT(*) {base_query};"
-            total_count_row = await connection.fetchrow(count_query, *params)
-            total_count = total_count_row['count'] if total_count_row else 0
+                # Count query
+                count_query = select(func.count()).select_from(query.subquery())
+                count_result = await session.execute(count_query)
+                total_count = count_result.scalar() or 0
 
+                # Apply sorting
+                allowed_sort_fields = ['title', 'created_at', 'updated_at', 'file_size', 'original_filename']
+                if sort_by not in allowed_sort_fields:
+                    sort_by = 'created_at'
+                if sort_order.lower() not in ['asc', 'desc']:
+                    sort_order = 'desc'
 
-            allowed_sort_fields = ['title', 'created_at', 'updated_at', 'file_size', 'original_filename']
-            if sort_by not in allowed_sort_fields:
-                sort_by = 'created_at'
-            if sort_order.lower() not in ['asc', 'desc']:
-                sort_order = 'desc'
+                sort_column = getattr(DBDocument, sort_by)
+                if sort_order.lower() == 'desc':
+                    query = query.order_by(sort_column.desc())
+                else:
+                    query = query.order_by(sort_column.asc())
 
-            data_query = f"""
-                SELECT * {base_query}
-                ORDER BY {sort_by} {sort_order.upper()}
-                LIMIT ${param_idx} OFFSET ${param_idx + 1};
-            """
-            params.extend([limit, skip])
-            
-            rows = await connection.fetch(data_query, *params)
-            documents = []
-            for row in rows:
-                doc_info = ExcelDocumentInfo(**{k: v for k, v in row.items() if k != 'doc_metadata'})
-                doc_info.doc_metadata = await self._deserialize_metadata(row.get('doc_metadata'))
-                documents.append(doc_info)
-            return documents, total_count
+                # Apply pagination
+                query = query.offset(skip).limit(limit)
+                
+                result = await session.execute(query)
+                records = result.scalars().all()
+                
+                documents = []
+                for record in records:
+                    doc_info = ExcelDocumentInfo(
+                        id=str(record.id),
+                        storage_id=str(record.storage_id),
+                        document_category=record.document_category,
+                        title=record.title,
+                        description=record.description,
+                        file_size=record.file_size,
+                        file_type=record.file_type,
+                        storage_path=record.storage_path,
+                        original_filename=record.original_filename,
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
+                        user_id=str(record.user_id),
+                        version=record.version,
+                        checksum=record.checksum,
+                        sheet_count=record.sheet_count
+                    )
+                    doc_info.doc_metadata = await self._deserialize_metadata(record.doc_metadata)
+                    documents.append(doc_info)
+                    
+                return documents, total_count
+                
+            except Exception as e:
+                logger.error(f"Error listing documents for user {user_id}: {e}", exc_info=True)
+                return [], 0
 
     async def update_metadata(self, doc_id: str, user_id: str, update_data: Dict[str, Any]) -> Optional[ExcelDocumentInfo]:
-        async with self.pool.acquire() as connection:
-            allowed_fields = {'title', 'description', 'doc_metadata', 'sheet_count', 'original_filename'}
-            set_clauses = []
-            values = []
-            param_idx = 1
+        async with self.async_session_factory() as session:
+            async with session.begin():
+                try:
+                    allowed_fields = {'title', 'description', 'doc_metadata', 'sheet_count', 'original_filename'}
+                    update_values = {}
 
-            for key, value in update_data.items():
-                if key in allowed_fields:
-                    if key == 'doc_metadata':
-                        values.append(await self._serialize_metadata(value))
-                    else:
-                        values.append(value)
-                    set_clauses.append(f"{key} = ${param_idx}")
-                    param_idx += 1
-            
-            if not set_clauses:
-                logger.warning(f"Update doc_metadata for {doc_id} called with no valid fields.")
-                return await self.get_by_id(doc_id, user_id)
+                    for key, value in update_data.items():
+                        if key in allowed_fields:
+                            if key == 'doc_metadata':
+                                update_values[key] = await self._serialize_metadata(value)
+                            else:
+                                update_values[key] = value
+                    
+                    if not update_values:
+                        logger.warning(f"Update doc_metadata for {doc_id} called with no valid fields.")
+                        return await self.get_by_id(doc_id, user_id)
 
-            set_clauses.append(f"updated_at = ${param_idx}")
-            values.append(datetime.utcnow())
-            param_idx += 1
+                    update_values['updated_at'] = datetime.utcnow()
 
-            values.extend([doc_id, user_id])
-
-            query = f"""
-                UPDATE {DOCUMENTS_TABLE}
-                SET {', '.join(set_clauses)}
-                WHERE id = ${param_idx} AND user_id = ${param_idx + 1} AND document_category = 'excel'
-                RETURNING *;
-            """
-            
-            updated_row = await connection.fetchrow(query, *values)
-            if updated_row:
-                doc_info = ExcelDocumentInfo(**{k: v for k, v in updated_row.items() if k != 'doc_metadata'})
-                doc_info.doc_metadata = await self._deserialize_metadata(updated_row.get('doc_metadata'))
-                logger.info(f"Updated doc_metadata for document {doc_id} for user {user_id}")
-                return doc_info
-            logger.warning(f"Document {doc_id} not found for user {user_id} for doc_metadata update.")
-            return None
+                    query = sqlalchemy_update(DBDocument).where(and_(
+                        DBDocument.id == doc_id,
+                        DBDocument.user_id == user_id,
+                        DBDocument.document_category == "excel"
+                    )).values(**update_values)
+                    
+                    result = await session.execute(query)
+                    
+                    if result.rowcount > 0:
+                        logger.info(f"Updated doc_metadata for document {doc_id} for user {user_id}")
+                        return await self.get_by_id(doc_id, user_id)
+                    
+                    logger.warning(f"Document {doc_id} not found for user {user_id} for doc_metadata update.")
+                    return None
+                    
+                except Exception as e:
+                    logger.error(f"Error updating document {doc_id}: {e}", exc_info=True)
+                    return None
 
     async def delete(self, doc_id: str, user_id: str) -> bool:
-        async with self.pool.acquire() as connection:
-
-
-            query = f"DELETE FROM {DOCUMENTS_TABLE} WHERE id = $1 AND user_id = $2 AND document_category = 'excel' RETURNING id;"
-            deleted_id = await connection.fetchval(query, doc_id, user_id)
-            
-            if deleted_id:
-                logger.info(f"Deleted document {doc_id} for user {user_id} from DB.")
-                return True 
-            logger.warning(f"Document {doc_id} not found for user {user_id} for deletion or not an excel document.")
-            return False
+        async with self.async_session_factory() as session:
+            async with session.begin():
+                try:
+                    query = sqlalchemy_delete(DBDocument).where(and_(
+                        DBDocument.id == doc_id,
+                        DBDocument.user_id == user_id,
+                        DBDocument.document_category == "excel"
+                    ))
+                    
+                    result = await session.execute(query)
+                    
+                    if result.rowcount > 0:
+                        logger.info(f"Deleted document {doc_id} for user {user_id} from DB.")
+                        return True 
+                    
+                    logger.warning(f"Document {doc_id} not found for user {user_id} for deletion or not an excel document.")
+                    return False
+                    
+                except Exception as e:
+                    logger.error(f"Error deleting document {doc_id}: {e}", exc_info=True)
+                    return False
 
     async def check_exists(self, doc_id: str, user_id: str) -> bool:
-        async with self.pool.acquire() as connection:
-            query = f"SELECT EXISTS(SELECT 1 FROM {DOCUMENTS_TABLE} WHERE id = $1 AND user_id = $2 AND document_category = 'excel');"
-            exists = await connection.fetchval(query, doc_id, user_id)
-            return bool(exists)
+        async with self.async_session_factory() as session:
+            try:
+                query = select(func.count()).where(and_(
+                    DBDocument.id == doc_id,
+                    DBDocument.user_id == user_id,
+                    DBDocument.document_category == "excel"
+                ))
+                result = await session.execute(query)
+                count = result.scalar() or 0
+                return count > 0
+                
+            except Exception as e:
+                logger.error(f"Error checking document existence {doc_id}: {e}", exc_info=True)
+                return False
 
 class ExcelTemplateRepository:
     """

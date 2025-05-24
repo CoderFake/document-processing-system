@@ -8,6 +8,32 @@ import uuid
 
 Base = declarative_base()
 
+class DBDocument(Base):
+    __tablename__ = "documents"
+    
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
+    storage_id = Column(UUID, unique=True, index=True, nullable=False, default=uuid.uuid4)
+    document_category = Column(String, nullable=False, default="pdf")
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    file_size = Column(Integer, nullable=False)
+    storage_path = Column(String, nullable=False)
+    original_filename = Column(String, nullable=False)
+    doc_metadata = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user_id = Column(UUID, nullable=False)
+    source_service = Column(String, nullable=True, default="pdf", index=True)
+    
+    # PDF specific fields
+    page_count = Column(Integer, nullable=True)
+    is_encrypted = Column(Boolean, default=False)
+    
+    # Additional fields for compatibility
+    file_type = Column(String, nullable=True)
+    version = Column(Integer, default=1)
+    checksum = Column(String, nullable=True)
+
 class PDFDocumentInfo(BaseModel):
     """
     Thông tin tài liệu PDF

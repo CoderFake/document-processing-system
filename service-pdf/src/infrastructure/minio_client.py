@@ -46,19 +46,23 @@ class MinioClient:
         except S3Error as e:
             raise StorageException(f"Không thể tạo bucket {bucket_name}: {str(e)}")
 
-    async def upload_pdf_document(self, content: bytes, filename: str) -> str:
+    async def upload_pdf_document(self, content: bytes, filename: str, object_name_override: Optional[str] = None) -> str:
         """
         Upload tài liệu PDF lên MinIO.
 
         Args:
             content: Nội dung file dưới dạng bytes
             filename: Tên file gốc
+            object_name_override: Path tùy chỉnh, nếu None sẽ tự tạo
 
         Returns:
             Object path trong MinIO
         """
         try:
-            object_name = f"{datetime.now().strftime('%Y-%m-%d')}/{str(uuid.uuid4())}/{filename}"
+            if object_name_override:
+                object_name = object_name_override
+            else:
+                object_name = f"{datetime.now().strftime('%Y-%m-%d')}/{str(uuid.uuid4())}/{filename}"
 
             self.client.put_object(
                 bucket_name=settings.MINIO_PDF_BUCKET,
@@ -302,3 +306,48 @@ class MinioClient:
             URL có chữ ký trước
         """
         return await self.get_presigned_url(object_name, settings.MINIO_STAMP_BUCKET, expires)
+
+    async def upload_document(self, content: bytes, filename: str, object_name_override: Optional[str] = None, bucket_name: Optional[str] = None, content_type: Optional[str] = None) -> str:
+        """
+        Upload tài liệu generic lên MinIO.
+
+        Args:
+            content: Nội dung file dưới dạng bytes
+            filename: Tên file gốc
+            object_name_override: Path tùy chỉnh, nếu None sẽ tự tạo
+            bucket_name: Tên bucket, mặc định là word-documents
+            content_type: MIME type của file
+
+        Returns:
+            Object path trong MinIO
+        """
+        try:
+            if object_name_override:
+                object_name = object_name_override
+            else:
+                object_name = f"{datetime.now().strftime('%Y-%m-%d')}/{str(uuid.uuid4())}/{filename}"
+
+            # Default bucket for word documents
+            target_bucket = bucket_name or "word-documents"
+            self._ensure_bucket_exists(target_bucket)
+
+            # Determine content type
+            if not content_type:
+                if filename.endswith('.docx'):
+                    content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                elif filename.endswith('.doc'):
+                    content_type = "application/msword"
+                else:
+                    content_type = "application/octet-stream"
+
+            self.client.put_object(
+                bucket_name=target_bucket,
+                object_name=object_name,
+                data=io.BytesIO(content),
+                length=len(content),
+                content_type=content_type
+            )
+
+            return object_name
+        except S3Error as e:
+            raise StorageException(f"Không thể upload tài liệu: {str(e)}")

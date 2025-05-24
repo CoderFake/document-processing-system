@@ -1,4 +1,4 @@
-from domain.models import ArchiveInfo, ArchiveFormat, FileEntryInfo, ExtractedArchiveInfo, ArchiveProcessingInfo
+from domain.models import ArchiveInfo, ArchiveFormat, FileEntryInfo, ExtractedArchiveInfo, ArchiveProcessingInfo, DBDocument
 from domain.exceptions import (
     BaseServiceException, FileNotFoundException, ArchiveException, ArchiveNotFoundException,
     StorageException, CompressionException, ExtractionException, UnsupportedFormatException,
@@ -13,6 +13,7 @@ __all__ = [
     "FileEntryInfo",
     "ExtractedArchiveInfo",
     "ArchiveProcessingInfo",
+    "DBDocument",
     "BaseServiceException",
     "FileNotFoundException",
     "ArchiveException",

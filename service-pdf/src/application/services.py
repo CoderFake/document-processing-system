@@ -30,6 +30,7 @@ from infrastructure.repository import (
 )
 from infrastructure.minio_client import MinioClient
 from infrastructure.rabbitmq_client import RabbitMQClient
+from domain.models import DBDocument
 from core.config import settings
 
 from PyPDF2 import PdfReader, PdfWriter
@@ -806,9 +807,6 @@ class PDFDocumentService:
             
             new_doc_filename = f"{os.path.splitext(original_doc_info.original_filename)[0]}.docx"
             
-            import json
-            from infrastructure.minio_client import MinioClient
-            
             generic_doc_info = {
                 "id": str(uuid.uuid4()),
                 "storage_id": str(uuid.uuid4()),
@@ -829,34 +827,34 @@ class PDFDocumentService:
             await self.minio_client.upload_document(
                 content=docx_content,
                 filename=new_doc_filename,
-                object_name_override=storage_path
+                object_name_override=storage_path,
+                bucket_name="word-documents"
             )
             
-            async with self.document_repository.pool.acquire() as connection:
-                query = """
-                    INSERT INTO documents (
-                        id, storage_id, document_category, title, description,
-                        file_size, file_type, storage_path, original_filename, 
-                        doc_metadata, created_at, updated_at, user_id, version
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                    RETURNING id;
-                """
-                saved_doc_id = await connection.fetchval(
-                    query,
-                    generic_doc_info["id"],
-                    generic_doc_info["storage_id"],
-                    generic_doc_info["document_category"],
-                    generic_doc_info["title"],
-                    generic_doc_info["description"],
-                    generic_doc_info["file_size"],
-                    generic_doc_info["file_type"],
-                    storage_path,
-                    json.dumps(generic_doc_info["doc_metadata"]),
-                    generic_doc_info["created_at"],
-                    generic_doc_info["updated_at"],
-                    generic_doc_info["user_id"],
-                    generic_doc_info["version"]
-                )
+            # Save to database using SQLAlchemy
+            async with self.document_repository.async_session_factory() as session:
+                async with session.begin():
+                    # Create DBDocument instance
+                    db_document = DBDocument(
+                        id=generic_doc_info["id"],
+                        storage_id=generic_doc_info["storage_id"],
+                        document_category=generic_doc_info["document_category"],
+                        title=generic_doc_info["title"],
+                        description=generic_doc_info["description"],
+                        file_size=generic_doc_info["file_size"],
+                        file_type=generic_doc_info["file_type"],
+                        storage_path=storage_path,
+                        original_filename=new_doc_filename,
+                        doc_metadata=json.dumps(generic_doc_info["doc_metadata"]),
+                        created_at=generic_doc_info["created_at"],
+                        updated_at=generic_doc_info["updated_at"],
+                        user_id=generic_doc_info["user_id"],
+                        version=generic_doc_info["version"]
+                    )
+                    
+                    session.add(db_document)
+                    await session.flush()
+                    saved_doc_id = str(db_document.id)
 
             processing_info.status = "completed"
             processing_info.completed_at = datetime.now()
@@ -970,38 +968,36 @@ class PDFDocumentService:
                 }
                 
                 zip_storage_path = f"files/{generic_zip_info['storage_id']}/{zip_filename}"
-                await self.minio_client.put_object(
-                    bucket_name=settings.MINIO_FILES_BUCKET,
-                    object_name=zip_storage_path,
-                    data=zip_content,
-                    content_type="application/zip"
+                await self.minio_client.upload_document(
+                    content=zip_content,
+                    filename=zip_filename,
+                    object_name_override=zip_storage_path,
+                    bucket_name=settings.MINIO_FILES_BUCKET
                 )
                 
-                async with self.document_repository.pool.acquire() as connection:
-                    query = """
-                        INSERT INTO documents (
-                            id, storage_id, document_category, title, description,
-                            file_size, file_type, storage_path, original_filename, 
-                            doc_metadata, created_at, updated_at, user_id, source_service
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                        RETURNING id;
-                    """
-                    saved_zip_doc_id = await connection.fetchval(
-                        query,
-                        generic_zip_info["id"],
-                        generic_zip_info["storage_id"],
-                        generic_zip_info["document_category"],
-                        generic_zip_info["title"],
-                        generic_zip_info["description"],
-                        generic_zip_info["file_size"],
-                        generic_zip_info["file_type"],
-                        zip_storage_path,
-                        json.dumps(generic_zip_info["doc_metadata"]),
-                        generic_zip_info["created_at"],
-                        generic_zip_info["updated_at"],
-                        generic_zip_info["user_id"],
-                        generic_zip_info["source_service"]
-                    )
+                # Save ZIP document to database using SQLAlchemy
+                async with self.document_repository.async_session_factory() as session:
+                    async with session.begin():
+                        db_document = DBDocument(
+                            id=generic_zip_info["id"],
+                            storage_id=generic_zip_info["storage_id"],
+                            document_category=generic_zip_info["document_category"],
+                            title=generic_zip_info["title"],
+                            description=generic_zip_info["description"],
+                            file_size=generic_zip_info["file_size"],
+                            file_type=generic_zip_info["file_type"],
+                            storage_path=zip_storage_path,
+                            original_filename=zip_filename,
+                            doc_metadata=json.dumps(generic_zip_info["doc_metadata"]),
+                            created_at=generic_zip_info["created_at"],
+                            updated_at=generic_zip_info["updated_at"],
+                            user_id=generic_zip_info["user_id"],
+                            source_service=generic_zip_info["source_service"]
+                        )
+                        
+                        session.add(db_document)
+                        await session.flush()
+                        saved_zip_doc_id = str(db_document.id)
                 
                 result_payload["zip_document_id"] = saved_zip_doc_id
                 result_payload["message"] = "Các trang PDF đã được chuyển đổi thành hình ảnh và nén vào file ZIP."

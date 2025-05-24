@@ -1,7 +1,10 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import asyncpg
+
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from domain.models import Base
+
 from core.config import settings
 from api.routes import router as api_router
 
@@ -13,29 +16,37 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-app.state.db_pool = None
+app.state.db_engine = None
+app.state.db_session_factory = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Sự kiện khi ứng dụng khởi động - Tạo DB pool."""
+    """Sự kiện khi ứng dụng khởi động - Tạo SQLAlchemy engine và session factory."""
     try:
-        app.state.db_pool = await asyncpg.create_pool(
-            dsn=settings.DATABASE_URL,
-            min_size=settings.DB_POOL_MIN_SIZE if hasattr(settings, 'DB_POOL_MIN_SIZE') else 1,
-            max_size=settings.DB_POOL_MAX_SIZE if hasattr(settings, 'DB_POOL_MAX_SIZE') else 10,
-            timeout=settings.DB_TIMEOUT if hasattr(settings, 'DB_TIMEOUT') else 30,
-            command_timeout=settings.DB_COMMAND_TIMEOUT if hasattr(settings, 'DB_COMMAND_TIMEOUT') else 5
+        # Create async engine with asyncpg driver
+        app.state.db_engine = create_async_engine(
+            settings.DATABASE_URL,
+            echo=False,
+            pool_size=10,
+            max_overflow=20
         )
-        print("Connection pool to PostgreSQL started.")
+        
+        # Create async session factory
+        app.state.db_session_factory = async_sessionmaker(
+            app.state.db_engine,
+            expire_on_commit=False
+        )
+        
+        print("SQLAlchemy async engine started for service-excel.")
     except Exception as e:
-        print(f"Could not connect to PostgreSQL: {e}")
+        print(f"Could not create SQLAlchemy engine: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Sự kiện khi ứng dụng tắt - Đóng DB pool."""
-    if app.state.db_pool:
-        await app.state.db_pool.close()
-        print("Connection pool to PostgreSQL closed.")
+    """Sự kiện khi ứng dụng tắt - Đóng SQLAlchemy engine."""
+    if app.state.db_engine:
+        await app.state.db_engine.dispose()
+        print("SQLAlchemy database engine closed.")
 
 app.add_middleware(
     CORSMiddleware,

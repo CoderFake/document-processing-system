@@ -4,12 +4,18 @@ import tempfile
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional, BinaryIO
-import asyncpg
 
-from domain.models import ArchiveInfo, ArchiveProcessingInfo, FileInfo
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import update as sqlalchemy_update, delete as sqlalchemy_delete, and_, func
+
+from domain.models import ArchiveInfo, ArchiveProcessingInfo, FileInfo, DBDocument
 from domain.exceptions import ArchiveNotFoundException, StorageException, FileNotFoundException
 from infrastructure.minio_client import MinioClient
 from core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ArchiveRepository:
@@ -285,9 +291,12 @@ class ProcessingRepository:
 
 
 class FileRepository:
-    def __init__(self, minio_client: MinioClient, db_pool: asyncpg.Pool):
+    def __init__(self, minio_client: MinioClient, db_session_factory):
         self.minio_client = minio_client
-        self.db_pool = db_pool
+        self.async_session_factory = db_session_factory
+        self.trash_metadata_file = os.path.join(settings.TEMP_DIR, "files_trash_metadata.json")
+        self._trash_cache: Dict[str, Any] = {}
+        self._load_trash_metadata()
 
     async def save_file(self, file_info: FileInfo, content: bytes) -> FileInfo:
         """
@@ -295,8 +304,8 @@ class FileRepository:
         FileInfo đầu vào có thể chưa có id, storage_id, storage_path, created_at, updated_at.
         Chúng sẽ được tạo/cập nhật và trả về trong FileInfo mới.
         """
-        async with self.db_pool.acquire() as connection:
-            async with connection.transaction():
+        async with self.async_session_factory() as session:
+            async with session.begin():
                 try:
                     storage_id_val = str(uuid.uuid4())
                     document_category = file_info.doc_metadata.get("document_category", "file")
@@ -334,46 +343,45 @@ class FileRepository:
                     updated_at_val = created_at_val
                     source_service_val = file_info.source_service or "files"
 
-                    query_insert = """
-                        INSERT INTO documents (
-                            storage_id, document_category, title, description, 
-                            file_size, storage_path, original_filename, doc_metadata, 
-                            created_at, updated_at, user_id, file_type, source_service
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-                        RETURNING id, created_at, updated_at; 
-                    """
-                    
-                    record = await connection.fetchrow(
-                        query_insert,
-                        storage_id_val, document_category, file_info.title, 
-                        file_info.description, file_size, storage_path_val,
-                        original_filename, metadata_json,
-                        created_at_val, updated_at_val, user_id_to_save,
-                        file_info.file_type, source_service_val
+                    # Create DBDocument instance using SQLAlchemy ORM
+                    db_document = DBDocument(
+                        storage_id=storage_id_val,
+                        document_category=document_category,
+                        title=file_info.title,
+                        description=file_info.description,
+                        file_size=file_size,
+                        storage_path=storage_path_val,
+                        original_filename=original_filename,
+                        doc_metadata=metadata_json,
+                        created_at=created_at_val,
+                        updated_at=updated_at_val,
+                        user_id=user_id_to_save,
+                        file_type=file_info.file_type,
+                        source_service=source_service_val
                     )
                     
-                    if record:
-                        return FileInfo(
-                            id=str(record['id']), 
-                            storage_id=storage_id_val,
-                            title=file_info.title,
-                            description=file_info.description,
-                            file_size=file_size,
-                            file_type=file_info.file_type,
-                            original_filename=original_filename,
-                            storage_path=storage_path_val,
-                            user_id=user_id_to_save,
-                            created_at=record['created_at'],
-                            updated_at=record['updated_at'],
-                            doc_metadata=doc_meta,
-                            source_service=source_service_val
-                        )
-                    else:
-                        await self.minio_client.remove_object(bucket_name=bucket_to_use, object_name=storage_path_val)
-                        raise StorageException("Không thể lưu file vào database.")
-                except asyncpg.exceptions.UniqueViolationError as e:
-                    raise StorageException(f"Lỗi trùng lặp khi lưu file: {str(e)}")
+                    # Add to session and commit
+                    session.add(db_document)
+                    await session.flush()
+                    await session.refresh(db_document)
+                    
+                    return FileInfo(
+                        id=str(db_document.id), 
+                        storage_id=storage_id_val,
+                        title=file_info.title,
+                        description=file_info.description,
+                        file_size=file_size,
+                        file_type=file_info.file_type,
+                        original_filename=original_filename,
+                        storage_path=storage_path_val,
+                        user_id=user_id_to_save,
+                        created_at=db_document.created_at,
+                        updated_at=db_document.updated_at,
+                        doc_metadata=doc_meta,
+                        source_service=source_service_val
+                    )
                 except Exception as e:
+                    logger.error(f"Lỗi khi lưu file: {e}", exc_info=True)
                     raise StorageException(f"Không thể lưu file: {str(e)}")
 
     async def get_file_info(self, file_db_id: str, user_id_check: Optional[str] = None) -> Optional[FileInfo]:
@@ -381,49 +389,48 @@ class FileRepository:
         Lấy thông tin file từ PostgreSQL theo ID trong bảng documents.
         Hàm này giờ sẽ lấy file thuộc bất kỳ document_category nào, không chỉ 'file'.
         """
-        async with self.db_pool.acquire() as connection:
+        async with self.async_session_factory() as session:
             try:
                 db_id_int = int(file_db_id)
                 
-                query_parts = ["SELECT * FROM documents WHERE id = $1"]
-                params = [db_id_int]
+                # Build query using SQLAlchemy ORM
+                query = select(DBDocument).where(DBDocument.id == db_id_int)
                 
                 if user_id_check is not None:
-                    query_parts.append("AND user_id = $2")
-                    params.append(user_id_check)
+                    query = query.where(DBDocument.user_id == user_id_check)
                 
-                final_query = " ".join(query_parts) + ";"
-                record = await connection.fetchrow(final_query, *params)
+                result = await session.execute(query)
+                record = result.scalar_one_or_none()
 
                 if not record:
                     return None
 
-                doc_data = dict(record)
                 loaded_metadata = {}
-                if doc_data.get('doc_metadata'):
+                if record.doc_metadata:
                     try:
-                        loaded_metadata = json.loads(doc_data['doc_metadata'])
+                        loaded_metadata = json.loads(record.doc_metadata)
                     except json.JSONDecodeError: 
                         pass 
 
                 return FileInfo(
-                    id=str(doc_data['id']),
-                    storage_id=doc_data['storage_id'],
-                    title=doc_data['title'],
-                    description=doc_data['description'],
-                    file_size=doc_data['file_size'],
-                    file_type=doc_data.get('file_type', 'application/octet-stream'),
-                    original_filename=doc_data['original_filename'],
-                    storage_path=doc_data['storage_path'],
-                    user_id=doc_data['user_id'],
-                    created_at=doc_data['created_at'],
-                    updated_at=doc_data['updated_at'],
+                    id=str(record.id),
+                    storage_id=str(record.storage_id),
+                    title=record.title,
+                    description=record.description,
+                    file_size=record.file_size,
+                    file_type=record.file_type or 'application/octet-stream',
+                    original_filename=record.original_filename,
+                    storage_path=record.storage_path,
+                    user_id=str(record.user_id),
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
                     doc_metadata=loaded_metadata,
-                    source_service=doc_data.get('source_service', 'files')
+                    source_service=record.source_service or 'files'
                 )
             except ValueError:
                 return None
             except Exception as e:
+                logger.error(f"Lỗi khi lấy thông tin file {file_db_id}: {e}", exc_info=True)
                 return None
 
     async def get_file_content(self, file_db_id: str, user_id_check: Optional[str] = None) -> bytes:
@@ -447,8 +454,8 @@ class FileRepository:
         Cập nhật thông tin file trong PostgreSQL. Không cập nhật content ở đây.
         FileInfo đầu vào phải có id (từ DB) và user_id.
         """
-        async with self.db_pool.acquire() as connection:
-            async with connection.transaction():
+        async with self.async_session_factory() as session:
+            async with session.begin():
                 try:
                     db_id_int = int(file_info_to_update.id)
                     user_id_owner = file_info_to_update.user_id
@@ -458,76 +465,100 @@ class FileRepository:
                     updated_at_val = datetime.utcnow()
                     metadata_json = json.dumps(file_info_to_update.doc_metadata) if file_info_to_update.doc_metadata else None
                     
-                    query = """
-                        UPDATE documents
-                        SET title = $1, description = $2, doc_metadata = $3, original_filename = $4, 
-                            file_type = $5, updated_at = $6
-                        WHERE id = $7 AND document_category = 'file' AND user_id = $8
-                        RETURNING *; 
-                    """
-                    record = await connection.fetchrow(
-                        query,
-                        file_info_to_update.title, file_info_to_update.description, metadata_json,
-                        file_info_to_update.original_filename, file_info_to_update.file_type,
-                        updated_at_val, db_id_int, user_id_owner
+                    # Build update query using SQLAlchemy ORM
+                    query = (
+                        sqlalchemy_update(DBDocument)
+                        .where(and_(
+                            DBDocument.id == db_id_int,
+                            DBDocument.document_category == 'file',
+                            DBDocument.user_id == user_id_owner
+                        ))
+                        .values(
+                            title=file_info_to_update.title,
+                            description=file_info_to_update.description,
+                            doc_metadata=metadata_json,
+                            original_filename=file_info_to_update.original_filename,
+                            file_type=file_info_to_update.file_type,
+                            updated_at=updated_at_val
+                        )
+                        .returning(DBDocument)
                     )
+                    
+                    result = await session.execute(query)
+                    record = result.scalar_one_or_none()
 
                     if not record:
                         raise FileNotFoundException(f"File with id {file_info_to_update.id} not found for user {user_id_owner} or not a 'file' category.")
                     
-                    updated_data = dict(record)
                     loaded_metadata = {}
-                    if updated_data.get('doc_metadata'):
-                        try: loaded_metadata = json.loads(updated_data['doc_metadata'])
-                        except: pass
+                    if record.doc_metadata:
+                        try: 
+                            loaded_metadata = json.loads(record.doc_metadata)
+                        except: 
+                            pass
                     
                     return FileInfo(
-                        id=str(updated_data['id']),
-                        storage_id=updated_data['storage_id'],
-                        title=updated_data['title'],
-                        description=updated_data['description'],
-                        file_size=updated_data['file_size'],
-                        file_type=updated_data.get('file_type', 'application/octet-stream'),
-                        original_filename=updated_data['original_filename'],
-                        storage_path=updated_data['storage_path'],
-                        user_id=updated_data['user_id'],
-                        created_at=updated_data['created_at'],
-                        updated_at=updated_data['updated_at'],
-                        doc_metadata=loaded_metadata
+                        id=str(record.id),
+                        storage_id=str(record.storage_id),
+                        title=record.title,
+                        description=record.description,
+                        file_size=record.file_size,
+                        file_type=record.file_type or 'application/octet-stream',
+                        original_filename=record.original_filename,
+                        storage_path=record.storage_path,
+                        user_id=str(record.user_id),
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
+                        doc_metadata=loaded_metadata,
+                        source_service=record.source_service or 'files'
                     )
                 except ValueError:
                     raise FileNotFoundException(file_info_to_update.id)
                 except FileNotFoundException:
                     raise
                 except Exception as e:
+                    logger.error(f"Lỗi khi cập nhật file {file_info_to_update.id}: {e}", exc_info=True)
                     raise StorageException(f"Không thể cập nhật thông tin file {file_info_to_update.id}: {str(e)}")
 
     async def delete_file_record(self, file_db_id: str, user_id_check: Optional[str] = None) -> None:
         """
         Xóa record file khỏi PostgreSQL và file khỏi MinIO.
         """
-        async with self.db_pool.acquire() as connection:
-            async with connection.transaction():
+        async with self.async_session_factory() as session:
+            async with session.begin():
                 try:
                     db_id_int = int(file_db_id)
                     
-                    query_select_parts = ["SELECT storage_path, user_id FROM documents WHERE id = $1 AND document_category = 'file'"]
-                    params_select = [db_id_int]
+                    # Get file info first using SQLAlchemy ORM
+                    query = select(DBDocument.storage_path, DBDocument.user_id).where(
+                        and_(
+                            DBDocument.id == db_id_int,
+                            DBDocument.document_category == 'file'
+                        )
+                    )
                     
-                    record = await connection.fetchrow(" ".join(query_select_parts) + ";", *params_select)
+                    result = await session.execute(query)
+                    record = result.first()
 
                     if not record:
                         raise FileNotFoundException(file_db_id)
                     
-                    if user_id_check is not None and record['user_id'] != user_id_check:
+                    if user_id_check is not None and str(record.user_id) != user_id_check:
                         raise FileNotFoundException(f"File {file_db_id} not found for user {user_id_check} or permission denied.")
 
-                    storage_path_to_delete = record['storage_path']
+                    storage_path_to_delete = record.storage_path
 
-                    query_delete = "DELETE FROM documents WHERE id = $1 AND document_category = 'file' RETURNING id;"
-                    deleted_record = await connection.fetchrow(query_delete, db_id_int)
+                    # Delete using SQLAlchemy ORM
+                    delete_query = sqlalchemy_delete(DBDocument).where(
+                        and_(
+                            DBDocument.id == db_id_int,
+                            DBDocument.document_category == 'file'
+                        )
+                    )
+                    
+                    delete_result = await session.execute(delete_query)
 
-                    if not deleted_record:
+                    if delete_result.rowcount == 0:
                         raise FileNotFoundException(file_db_id) 
 
                     if storage_path_to_delete:
@@ -537,6 +568,7 @@ class FileRepository:
                 except FileNotFoundException:
                     raise
                 except Exception as e:
+                    logger.error(f"Lỗi khi xóa file {file_db_id}: {e}", exc_info=True)
                     raise StorageException(f"Không thể xóa file {file_db_id}: {str(e)}")
 
     async def list_files(
@@ -557,86 +589,62 @@ class FileRepository:
         if user_id is None:
             return {"items": [], "total_count": 0}
 
-        async with self.db_pool.acquire() as connection:
+        async with self.async_session_factory() as session:
             try:
-                base_query = "FROM documents"
-                count_query_select = "SELECT COUNT(*) as total_count"
-                data_query_select = "SELECT *"
-                
-                conditions = []
-                params = []
-                param_idx = 1
-            
-                conditions.append(f"user_id = ${param_idx}")
-                params.append(user_id)
-                param_idx += 1
+                # Build query using SQLAlchemy ORM
+                query = select(DBDocument).where(DBDocument.user_id == user_id)
                 
                 if document_category_filter is not None:
-                    conditions.append(f"document_category = ${param_idx}")
-                    params.append(document_category_filter)
-                    param_idx += 1
+                    query = query.where(DBDocument.document_category == document_category_filter)
                 
                 if source_service_filter is not None:
-                    conditions.append(f"source_service = ${param_idx}")
-                    params.append(source_service_filter)
-                    param_idx += 1
+                    query = query.where(DBDocument.source_service == source_service_filter)
 
                 if search:
-                    search_term_lower = f"%{search.lower()}%"
-                    search_condition_parts = [
-                        f"LOWER(title) LIKE ${param_idx}",
-                        f"LOWER(COALESCE(description, '')) LIKE ${param_idx + 1}",
-                        f"LOWER(original_filename) LIKE ${param_idx + 2}"
-                    ]
-                    search_condition = f"({' OR '.join(search_condition_parts)})"
-                    conditions.append(search_condition)
-                    params.extend([search_term_lower] * len(search_condition_parts))
-                    param_idx += len(search_condition_parts)
+                    search_term = f"%{search.lower()}%"
+                    query = query.where(
+                        (func.lower(DBDocument.title).like(search_term)) |
+                        (func.lower(DBDocument.description).like(search_term)) |
+                        (func.lower(DBDocument.original_filename).like(search_term))
+                    )
 
-                where_clause = ""
-                if conditions:
-                    where_clause = "WHERE " + " AND ".join(conditions)
+                # Count query
+                count_query = select(func.count()).select_from(query.subquery())
+                count_result = await session.execute(count_query)
+                total_count = count_result.scalar() or 0
 
-                full_count_query = f"{count_query_select} {base_query} {where_clause};"
-                total_count_record = await connection.fetchrow(full_count_query, *params)
-                total_count = total_count_record['total_count'] if total_count_record else 0
-
-                data_query_params = list(params)
-                
-                pagination_clause = f"ORDER BY created_at DESC OFFSET ${param_idx} LIMIT ${param_idx+1}"
-                data_query_params.extend([skip, limit])
-                
-                full_data_query = f"{data_query_select} {base_query} {where_clause} {pagination_clause};"
-                db_records = await connection.fetch(full_data_query, *data_query_params)
+                # List query with pagination
+                list_query = query.order_by(DBDocument.created_at.desc()).offset(skip).limit(limit)
+                result = await session.execute(list_query)
+                records = result.scalars().all()
 
                 files_list = []
-                for record_item in db_records:
-                    doc_data = dict(record_item)
+                for record in records:
                     loaded_metadata = {}
-                    if doc_data.get('doc_metadata'):
+                    if record.doc_metadata:
                         try: 
-                            loaded_metadata = json.loads(doc_data['doc_metadata'])
+                            loaded_metadata = json.loads(record.doc_metadata)
                         except json.JSONDecodeError: 
                             pass 
 
                     files_list.append(FileInfo(
-                        id=str(doc_data['id']),
-                        storage_id=doc_data['storage_id'],
-                        title=doc_data['title'],
-                        description=doc_data['description'],
-                        file_size=doc_data['file_size'],
-                        file_type=doc_data.get('file_type', 'application/octet-stream'),
-                        original_filename=doc_data['original_filename'],
-                        storage_path=doc_data['storage_path'],
-                        user_id=doc_data['user_id'],
-                        created_at=doc_data['created_at'],
-                        updated_at=doc_data['updated_at'],
+                        id=str(record.id),
+                        storage_id=str(record.storage_id),
+                        title=record.title,
+                        description=record.description,
+                        file_size=record.file_size,
+                        file_type=record.file_type or 'application/octet-stream',
+                        original_filename=record.original_filename,
+                        storage_path=record.storage_path,
+                        user_id=str(record.user_id),
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
                         doc_metadata=loaded_metadata,
-                        source_service=doc_data.get('source_service', 'files')
+                        source_service=record.source_service or 'files'
                     ))
                 return {"items": files_list, "total_count": total_count}
             except Exception as e:
-                print(f"DB Error in list_files: {e}")
+                logger.error(f"DB Error in list_files: {e}", exc_info=True)
                 raise StorageException(f"Không thể lấy danh sách file từ DB: {str(e)}")
 
     def _load_trash_metadata(self) -> None:
@@ -653,7 +661,7 @@ class FileRepository:
             with open(self.trash_metadata_file, "w") as f:
                 json.dump(self._trash_cache, f, default=str)
         except Exception as e:
-            print(f"Error saving trash metadata: {e}")
+            logger.error(f"Error saving trash metadata: {e}")
 
     async def move_to_trash(self, file_id: str, user_id: Optional[str] = None) -> None:
         file_info = await self.get_file_info(file_id, user_id_check=user_id)
@@ -701,43 +709,39 @@ class FileRepository:
             storage_path=trash_data["storage_path"],
             user_id=trash_data["user_id"],
             created_at=datetime.fromisoformat(trash_data["original_created_at"]),
+            updated_at=None,
             doc_metadata=trash_data["doc_metadata"]
         )
 
     async def get_trash_items(self, skip: int = 0, limit: int = 10, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        user_trash = []
+        self._load_trash_metadata()
+        filtered_items = []
         for item_id, item_data in self._trash_cache.items():
             if user_id is None or item_data.get("user_id") == user_id:
-                item_data_copy = item_data.copy()
-                item_data_copy["trash_item_id"] = item_id
-                user_trash.append(item_data_copy)
+                item_data["trash_item_id"] = item_id
+                filtered_items.append(item_data)
         
-        user_trash.sort(key=lambda x: x.get("deleted_at", ""), reverse=True)
-        return user_trash[skip : skip + limit]
+        filtered_items.sort(key=lambda x: x.get("deleted_at", ""), reverse=True)
+        return filtered_items[skip:skip+limit]
 
     async def empty_trash(self, user_id: Optional[str] = None) -> int:
-        items_to_delete_permanently = []
-        remaining_trash_items = {}
-        deleted_count = 0
-
+        self._load_trash_metadata()
+        items_to_remove = []
         for item_id, item_data in self._trash_cache.items():
             if user_id is None or item_data.get("user_id") == user_id:
-                items_to_delete_permanently.append(item_data)
-                deleted_count += 1
-            else:
-                remaining_trash_items[item_id] = item_data
+                items_to_remove.append(item_id)
+                storage_path = item_data.get("storage_path")
+                if storage_path:
+                    try:
+                        await self.minio_client.remove_raw_file(storage_path)
+                    except Exception as e:
+                        logger.error(f"Error deleting file from MinIO {storage_path}: {e}")
         
-        for item_data in items_to_delete_permanently:
-            try:
-                if item_data.get("storage_path"):
-                    await self.minio_client.remove_raw_file(item_data["storage_path"])
-            except Exception as e:
-                print(f"Error permanently deleting file {item_data.get('original_filename')} from MinIO/DB: {e}")
-                pass
-
-        self._trash_cache = remaining_trash_items
+        for item_id in items_to_remove:
+            del self._trash_cache[item_id]
+        
         self._save_trash_metadata()
-        return deleted_count
+        return len(items_to_remove)
 
 
 class CompressJobRepository:

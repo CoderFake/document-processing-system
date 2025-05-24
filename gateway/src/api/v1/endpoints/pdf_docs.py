@@ -50,7 +50,7 @@ async def upload_pdf_document(
         data_payload["description"] = description
 
     response = await pdf_service.upload_file(
-        "/documents/upload",
+        "/documents",
         file=file,
         data=data_payload,
         headers=headers
@@ -75,6 +75,33 @@ async def convert_pdf_to_word(
         "/documents/convert/to-word",
         file=file,
         data={},
+        headers=headers
+    )
+
+    return response
+
+@router.post("/convert/document/to-word", summary="Chuyển đổi tài liệu PDF đã có sang Word")
+async def convert_pdf_document_to_word(
+        document_id: str = Form(...),
+        start_page: Optional[int] = Form(None),
+        end_page: Optional[int] = Form(None),
+        current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Chuyển đổi tài liệu PDF đã có trong hệ thống sang định dạng Word.
+    """
+    headers = {"X-User-ID": str(current_user["id"])}
+    data_payload = {
+        "document_id": document_id,
+    }
+    if start_page is not None:
+        data_payload["start_page"] = str(start_page)
+    if end_page is not None:
+        data_payload["end_page"] = str(end_page)
+    
+    response = await pdf_service.post_form(
+        "/documents/convert/to-word",
+        data=data_payload,
         headers=headers
     )
 

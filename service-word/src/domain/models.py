@@ -8,6 +8,28 @@ from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 
+class DBDocument(Base):
+    __tablename__ = "documents"
+    
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
+    storage_id = Column(UUID, unique=True, index=True, nullable=False, default=uuid.uuid4)
+    document_category = Column(String, nullable=False, default="word")
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    file_size = Column(Integer, nullable=False)
+    storage_path = Column(String, nullable=False)
+    original_filename = Column(String, nullable=False)
+    doc_metadata = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user_id = Column(UUID, nullable=False)
+    
+    # Word-specific fields
+    page_count = Column(Integer, nullable=True)
+    file_type = Column(String, nullable=True)
+    version = Column(Integer, nullable=True, default=1)
+    checksum = Column(String, nullable=True)
+
 class WordDocumentInfo(BaseModel):
     """
     Thông tin tài liệu Word

@@ -347,20 +347,28 @@ async def crack_pdf_password(
 @router.post("/documents/convert/to-word", summary="Chuyển đổi PDF sang Word", response_model=Dict[str, Any])
 async def convert_pdf_to_word(
     current_user_id: str = Depends(get_current_user_id_from_header),
-    dto: ConvertPdfToWordDTO = Body(...),
+    document_id: str = Form(...),
+    start_page: Optional[int] = Form(None),
+    end_page: Optional[int] = Form(None),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
     try:
+        # Create DTO from form data
+        dto = ConvertPdfToWordDTO(
+            document_id=document_id,
+            start_page=start_page,
+            end_page=end_page
+        )
         result = await pdf_service.convert_to_word(dto, current_user_id)
         return result
     except DocumentNotFoundException as e:
-        logger.warning(f"PDF not found for Word conversion (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        logger.warning(f"PDF not found for Word conversion (doc: {document_id}, user: {current_user_id}): {e}")
         raise HTTPException(status_code=404, detail=str(e))
     except ConversionException as e:
-        logger.warning(f"PDF to Word conversion failed (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        logger.warning(f"PDF to Word conversion failed (doc: {document_id}, user: {current_user_id}): {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Lỗi khi chuyển PDF sang Word (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        logger.error(f"Lỗi khi chuyển PDF sang Word (doc: {document_id}, user: {current_user_id}): {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
 

@@ -1,12 +1,15 @@
 import os
 import json
-import asyncpg
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import uuid
 import logging
 
-from domain.models import WordDocumentInfo as DocumentInfo, TemplateInfo, BatchProcessingInfo
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import update as sqlalchemy_update, delete as sqlalchemy_delete, and_, func
+
+from domain.models import WordDocumentInfo as DocumentInfo, TemplateInfo, BatchProcessingInfo, DBDocument
 from domain.exceptions import DocumentNotFoundException, TemplateNotFoundException, StorageException
 from infrastructure.minio_client import MinioClient
 from core.config import settings
@@ -18,16 +21,16 @@ class DocumentRepository:
     Repository để làm việc với tài liệu Word sử dụng bảng documents chung
     """
 
-    def __init__(self, minio_client: MinioClient, db_pool: asyncpg.Pool):
+    def __init__(self, minio_client: MinioClient, db_session_factory):
         self.minio_client = minio_client
-        self.db_pool = db_pool
+        self.async_session_factory = db_session_factory
 
     async def save(self, document_info: DocumentInfo, content: bytes) -> DocumentInfo:
         """
         Lưu tài liệu Word vào MinIO và metadata vào bảng documents
         """
-        async with self.db_pool.acquire() as connection:
-            async with connection.transaction():
+        async with self.async_session_factory() as session:
+            async with session.begin():
                 try:
                     # Tạo các ID và paths
                     doc_id = str(uuid.uuid4())
@@ -73,30 +76,35 @@ class DocumentRepository:
                     # Serialize metadata
                     metadata_json = json.dumps(document_info.doc_metadata) if document_info.doc_metadata else None
                     
-                    # Insert vào database
-                    query = """
-                        INSERT INTO documents (
-                            id, storage_id, document_category, title, description,
-                            file_size, file_type, storage_path, original_filename, 
-                            doc_metadata, created_at, updated_at, user_id,
-                            version, checksum
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-                        RETURNING id, created_at, updated_at
-                    """
-                    
-                    record = await connection.fetchrow(
-                        query,
-                        doc_id, storage_id, "word", document_info.title, document_info.description,
-                        document_info.file_size, document_info.file_type, object_name,
-                        document_info.original_filename, metadata_json,
-                        document_info.created_at, document_info.updated_at, document_info.user_id,
-                        document_info.version or 1, document_info.checksum
+                    # Create DBDocument instance using SQLAlchemy ORM
+                    db_document = DBDocument(
+                        id=doc_id,
+                        storage_id=storage_id,
+                        document_category="word",
+                        title=document_info.title,
+                        description=document_info.description,
+                        file_size=document_info.file_size,
+                        file_type=document_info.file_type,
+                        storage_path=object_name,
+                        original_filename=document_info.original_filename,
+                        doc_metadata=metadata_json,
+                        created_at=document_info.created_at,
+                        updated_at=document_info.updated_at,
+                        user_id=document_info.user_id,
+                        page_count=document_info.page_count,
+                        version=document_info.version or 1,
+                        checksum=document_info.checksum
                     )
                     
-                    if record:
-                        document_info.id = str(record['id'])
-                        document_info.created_at = record['created_at']
-                        document_info.updated_at = record['updated_at']
+                    # Add to session and commit
+                    session.add(db_document)
+                    await session.flush()
+                    await session.refresh(db_document)
+                    
+                    # Update document_info với saved data
+                    document_info.id = str(db_document.id)
+                    document_info.created_at = db_document.created_at
+                    document_info.updated_at = db_document.updated_at
                     
                     return document_info
                     
@@ -108,37 +116,51 @@ class DocumentRepository:
         """
         Lấy tài liệu Word từ database và MinIO
         """
-        async with self.db_pool.acquire() as connection:
+        async with self.async_session_factory() as session:
             try:
-                # Build query với user check nếu cần
-                base_query = "SELECT * FROM documents WHERE id = $1 AND document_category = $2"
-                params = [document_id, "word"]
+                # Build query using SQLAlchemy ORM
+                query = select(DBDocument).where(and_(
+                    DBDocument.id == document_id,
+                    DBDocument.document_category == "word"
+                ))
                 
                 if user_id_check:
-                    base_query += " AND user_id = $3"
-                    params.append(user_id_check)
+                    query = query.where(DBDocument.user_id == user_id_check)
                 
-                record = await connection.fetchrow(base_query, *params)
+                result = await session.execute(query)
+                record = result.scalar_one_or_none()
                 
                 if not record:
                     return None, None
                 
-                # Convert record to dict và parse metadata
-                doc_data = dict(record)
-                if doc_data.get('doc_metadata'):
+                # Parse metadata
+                doc_metadata = {}
+                if record.doc_metadata:
                     try:
-                        doc_data['doc_metadata'] = json.loads(doc_data['doc_metadata'])
+                        doc_metadata = json.loads(record.doc_metadata)
                     except json.JSONDecodeError:
-                        doc_data['doc_metadata'] = {}
-                else:
-                    doc_data['doc_metadata'] = {}
+                        doc_metadata = {}
                 
-                # Convert UUID fields to string
-                doc_data['id'] = str(doc_data['id'])
-                doc_data['storage_id'] = str(doc_data['storage_id'])
-                doc_data['user_id'] = str(doc_data['user_id'])
+                # Create DocumentInfo object
+                doc_data = {
+                    'id': str(record.id),
+                    'storage_id': str(record.storage_id),
+                    'title': record.title,
+                    'description': record.description,
+                    'file_size': record.file_size,
+                    'page_count': record.page_count,
+                    'storage_path': record.storage_path,
+                    'original_filename': record.original_filename,
+                    'created_at': record.created_at,
+                    'updated_at': record.updated_at,
+                    'doc_metadata': doc_metadata,
+                    'user_id': str(record.user_id),
+                    'document_category': record.document_category,
+                    'file_type': record.file_type,
+                    'version': record.version,
+                    'checksum': record.checksum
+                }
                 
-                # Tạo DocumentInfo object
                 document_info = DocumentInfo(**doc_data)
                 
                 # Download content từ MinIO
@@ -157,136 +179,109 @@ class DocumentRepository:
         """
         Lấy danh sách tài liệu Word
         """
-        async with self.db_pool.acquire() as connection:
+        async with self.async_session_factory() as session:
             try:
-                # Build base queries
-                where_conditions = ["document_category = 'word'"]
-                params = []
-                param_count = 1
+                # Build query using SQLAlchemy ORM
+                query = select(DBDocument).where(DBDocument.document_category == "word")
                 
                 # Add user filter
                 if user_id:
-                    where_conditions.append(f"user_id = ${param_count}")
-                    params.append(user_id)
-                    param_count += 1
+                    query = query.where(DBDocument.user_id == user_id)
                 
                 # Add search filter
                 if search:
-                    search_condition = f"(LOWER(title) LIKE ${param_count} OR LOWER(description) LIKE ${param_count})"
-                    where_conditions.append(search_condition)
                     search_term = f"%{search.lower()}%"
-                    params.extend([search_term, search_term])
-                    param_count += 2
-                
-                where_clause = " AND ".join(where_conditions)
+                    query = query.where(
+                        (func.lower(DBDocument.title).like(search_term)) |
+                        (func.lower(DBDocument.description).like(search_term))
+                    )
                 
                 # Count query
-                count_query = f"SELECT COUNT(*) as total FROM documents WHERE {where_clause}"
-                count_record = await connection.fetchrow(count_query, *params)
-                total_count = count_record['total'] if count_record else 0
+                count_query = select(func.count()).select_from(query.subquery())
+                count_result = await session.execute(count_query)
+                total_count = count_result.scalar() or 0
                 
-                # List query với pagination
-                list_query = f"""
-                    SELECT * FROM documents 
-                    WHERE {where_clause}
-                    ORDER BY created_at DESC 
-                    LIMIT ${param_count} OFFSET ${param_count + 1}
-                """
-                params.extend([limit, skip])
-                
-                records = await connection.fetch(list_query, *params)
+                # List query with pagination
+                list_query = query.order_by(DBDocument.created_at.desc()).offset(skip).limit(limit)
+                result = await session.execute(list_query)
+                records = result.scalars().all()
                 
                 # Convert records to DocumentInfo objects
                 documents = []
                 for record in records:
-                    doc_data = dict(record)
-                    
                     # Parse metadata
-                    if doc_data.get('doc_metadata'):
+                    doc_metadata = {}
+                    if record.doc_metadata:
                         try:
-                            doc_data['doc_metadata'] = json.loads(doc_data['doc_metadata'])
+                            doc_metadata = json.loads(record.doc_metadata)
                         except json.JSONDecodeError:
-                            doc_data['doc_metadata'] = {}
-                    else:
-                        doc_data['doc_metadata'] = {}
+                            doc_metadata = {}
                     
-                    # Convert UUID fields
-                    doc_data['id'] = str(doc_data['id'])
-                    doc_data['storage_id'] = str(doc_data['storage_id'])
-                    doc_data['user_id'] = str(doc_data['user_id'])
+                    # Create DocumentInfo
+                    doc_data = {
+                        'id': str(record.id),
+                        'storage_id': str(record.storage_id),
+                        'title': record.title,
+                        'description': record.description,
+                        'file_size': record.file_size,
+                        'page_count': record.page_count,
+                        'storage_path': record.storage_path,
+                        'original_filename': record.original_filename,
+                        'created_at': record.created_at,
+                        'updated_at': record.updated_at,
+                        'doc_metadata': doc_metadata,
+                        'user_id': str(record.user_id),
+                        'document_category': record.document_category,
+                        'file_type': record.file_type,
+                        'version': record.version,
+                        'checksum': record.checksum
+                    }
                     
                     documents.append(DocumentInfo(**doc_data))
                 
                 return documents, total_count
                 
             except Exception as e:
-                logger.error(f"Lỗi khi lấy danh sách tài liệu: {e}", exc_info=True)
+                logger.error(f"Lỗi khi lấy danh sách tài liệu Word: {e}", exc_info=True)
                 return [], 0
 
     async def update(self, document_info: DocumentInfo, user_id_check: Optional[str] = None) -> DocumentInfo:
         """
         Cập nhật thông tin tài liệu Word
         """
-        async with self.db_pool.acquire() as connection:
-            async with connection.transaction():
+        async with self.async_session_factory() as session:
+            async with session.begin():
                 try:
                     if not document_info.id:
                         raise ValueError("Document ID is required for update.")
                     
-                    # Build update query
-                    set_clauses = [
-                        "title = $1",
-                        "description = $2", 
-                        "doc_metadata = $3",
-                        "updated_at = $4"
-                    ]
-                    
                     document_info.updated_at = datetime.now()
                     metadata_json = json.dumps(document_info.doc_metadata) if document_info.doc_metadata else None
                     
-                    params = [
-                        document_info.title,
-                        document_info.description,
-                        metadata_json,
-                        document_info.updated_at
-                    ]
+                    # Build update query with proper values
+                    update_values = {
+                        'title': document_info.title,
+                        'description': document_info.description,
+                        'doc_metadata': metadata_json,
+                        'updated_at': document_info.updated_at
+                    }
                     
-                    # Build where conditions
-                    where_conditions = ["id = $5", "document_category = $6"]
-                    params.extend([document_info.id, "word"])
-                    param_count = 7
+                    query = sqlalchemy_update(DBDocument).where(and_(
+                        DBDocument.id == document_info.id,
+                        DBDocument.document_category == "word"
+                    ))
                     
                     if user_id_check:
-                        where_conditions.append(f"user_id = ${param_count}")
-                        params.append(user_id_check)
+                        query = query.where(DBDocument.user_id == user_id_check)
                     
-                    query = f"""
-                        UPDATE documents 
-                        SET {', '.join(set_clauses)}
-                        WHERE {' AND '.join(where_conditions)}
-                        RETURNING *
-                    """
+                    query = query.values(**update_values)
                     
-                    record = await connection.fetchrow(query, *params)
+                    result = await session.execute(query)
                     
-                    if not record:
+                    if result.rowcount == 0:
                         raise DocumentNotFoundException(f"Tài liệu {document_info.id} không tìm thấy hoặc không có quyền cập nhật.")
                     
-                    # Convert và return updated document
-                    doc_data = dict(record)
-                    if doc_data.get('doc_metadata'):
-                        try:
-                            doc_data['doc_metadata'] = json.loads(doc_data['doc_metadata'])
-                        except json.JSONDecodeError:
-                            doc_data['doc_metadata'] = {}
-                    else:
-                        doc_data['doc_metadata'] = {}
-                    
-                    doc_data['id'] = str(doc_data['id'])
-                    doc_data['storage_id'] = str(doc_data['storage_id'])
-                    doc_data['user_id'] = str(doc_data['user_id'])
-                    
-                    return DocumentInfo(**doc_data)
+                    return document_info
                     
                 except DocumentNotFoundException:
                     raise
@@ -298,38 +293,41 @@ class DocumentRepository:
         """
         Xóa tài liệu Word
         """
-        async with self.db_pool.acquire() as connection:
-            async with connection.transaction():
+        async with self.async_session_factory() as session:
+            async with session.begin():
                 try:
-                    # Get document info trước khi xóa
-                    get_query = "SELECT storage_path FROM documents WHERE id = $1 AND document_category = $2"
-                    params = [document_id, "word"]
+                    # Get document info before deleting
+                    get_query = select(DBDocument).where(and_(
+                        DBDocument.id == document_id,
+                        DBDocument.document_category == "word"
+                    ))
                     
                     if user_id_check:
-                        get_query += " AND user_id = $3"
-                        params.append(user_id_check)
+                        get_query = get_query.where(DBDocument.user_id == user_id_check)
                     
-                    record = await connection.fetchrow(get_query, *params)
+                    result = await session.execute(get_query)
+                    record = result.scalar_one_or_none()
                     
                     if not record:
                         raise DocumentNotFoundException(f"Tài liệu {document_id} không tìm thấy hoặc không có quyền xóa.")
                     
-                    storage_path = record['storage_path']
+                    storage_path = record.storage_path
                     
-                    # Delete từ database
-                    delete_query = "DELETE FROM documents WHERE id = $1 AND document_category = $2"
-                    delete_params = [document_id, "word"]
+                    # Delete from database
+                    delete_query = sqlalchemy_delete(DBDocument).where(and_(
+                        DBDocument.id == document_id,
+                        DBDocument.document_category == "word"
+                    ))
                     
                     if user_id_check:
-                        delete_query += " AND user_id = $3"
-                        delete_params.append(user_id_check)
+                        delete_query = delete_query.where(DBDocument.user_id == user_id_check)
                     
-                    result = await connection.execute(delete_query, *delete_params)
+                    result = await session.execute(delete_query)
                     
-                    if result == "DELETE 0":
+                    if result.rowcount == 0:
                         raise DocumentNotFoundException(f"Không thể xóa tài liệu {document_id}.")
                     
-                    # Delete từ MinIO
+                    # Delete from MinIO
                     if storage_path:
                         try:
                             await self.minio_client.delete_document(storage_path)

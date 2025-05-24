@@ -235,28 +235,34 @@ const api = {
       apiClient.post(`/pdf/merge`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       }),
-    downloadDocument: (id) =>
-      `${API_BASE_URL}/pdf/download/${id}`,
-        getTaskStatus: (taskId) =>
+    downloadDocument: (id) => {
+      return apiClient.get(`/pdf/download/${id}`, {
+        responseType: 'blob'
+      });
+    },
+    getTaskStatus: (taskId) =>
       apiClient.get(`/pdf/status/${taskId}`),
-        downloadProcessedDocument: (taskId) =>
-      `${API_BASE_URL}/pdf/download/processed/${taskId}`,
-        addWatermark: (formData) => {
+    downloadProcessedDocument: (taskId) => {
+      return apiClient.get(`/pdf/download/processed/${taskId}`, {
+        responseType: 'blob'
+      });
+    },
+    addWatermark: (formData) => {
       return apiClient.post('/pdf/watermark', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        addSignature: (formData) => {
+    addSignature: (formData) => {
       return apiClient.post('/pdf/sign', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        crackPassword: (formData) => {
+    crackPassword: (formData) => {
       return apiClient.post('/pdf/crack', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        convertFileToWord: (fileOrFormData) => {
+    convertFileToWord: (fileOrFormData) => {
       let formData;
       
       if (fileOrFormData instanceof FormData) {
@@ -285,13 +291,19 @@ const api = {
       apiClient.delete(`/word/${id}`),
     convertToPdf: (id) => 
       apiClient.post(`/word/convert/to-pdf`, { document_id: id }),
-    downloadDocument: (id) =>
-      `${API_BASE_URL}/word/download/${id}`,
-        getTaskStatus: (taskId) =>
+    downloadDocument: (id) => {
+      return apiClient.get(`/word/download/${id}`, {
+        responseType: 'blob'
+      });
+    },
+    getTaskStatus: (taskId) =>
       apiClient.get(`/word/status/${taskId}`),
-        downloadProcessedDocument: (taskId) =>
-      `${API_BASE_URL}/word/download/processed/${taskId}`,
-        convertFileToPdf: (file) => {
+    downloadProcessedDocument: (taskId) => {
+      return apiClient.get(`/word/download/processed/${taskId}`, {
+        responseType: 'blob'
+      });
+    },
+    convertFileToPdf: (file) => {
       const formData = new FormData();
       formData.append('file', file);
       
@@ -299,7 +311,7 @@ const api = {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        addWatermark: (file, watermarkText, position = 'center', opacity = 0.5) => {
+    addWatermark: (file, watermarkText, position = 'center', opacity = 0.5) => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('watermark_text', watermarkText);
@@ -310,7 +322,7 @@ const api = {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        applyTemplate: (templateId, data, outputFormat = 'docx') => {
+    applyTemplate: (templateId, data, outputFormat = 'docx') => {
       const formData = new FormData();
       formData.append('template_id', templateId);
       formData.append('data', typeof data === 'string' ? data : JSON.stringify(data));
@@ -320,13 +332,13 @@ const api = {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        getTemplates: (category = null, params = {}) => {
+    getTemplates: (category = null, params = {}) => {
       if (category) {
         params.category = category;
       }
       return apiClient.get('/word/templates', { params });
     },
-        createBatchDocuments: (templateId, dataFile, outputFormat = 'docx') => {
+    createBatchDocuments: (templateId, dataFile, outputFormat = 'docx') => {
       const formData = new FormData();
       formData.append('template_id', templateId);
       formData.append('data_file', dataFile);
@@ -336,22 +348,22 @@ const api = {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        createInternshipReport: (formData) => {
+    createInternshipReport: (formData) => {
       return apiClient.post('/word/templates/internship-report', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        createRewardReport: (formData) => {
+    createRewardReport: (formData) => {
       return apiClient.post('/word/templates/reward-report', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        createLaborContract: (formData) => {
+    createLaborContract: (formData) => {
       return apiClient.post('/word/templates/labor-contract', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        createInvitations: (dataFile, outputFormat = 'docx') => {
+    createInvitations: (dataFile, outputFormat = 'docx') => {
       const formData = new FormData();
       formData.append('data_file', dataFile);
       formData.append('output_format', outputFormat);
@@ -377,13 +389,19 @@ const api = {
       apiClient.post(`/excel/convert/to-pdf`, { document_id: id }),
     convertToWord: (id) => 
       apiClient.post(`/excel/convert/to-word`, { document_id: id }),
-    downloadDocument: (id) =>
-      `${API_BASE_URL}/excel/download/${id}`,
-        getTaskStatus: (taskId) =>
+    downloadDocument: (id) => {
+      return apiClient.get(`/excel/download/${id}`, {
+        responseType: 'blob'
+      });
+    },
+    getTaskStatus: (taskId) =>
       apiClient.get(`/excel/status/${taskId}`),
-        downloadProcessedDocument: (taskId) =>
-      `${API_BASE_URL}/excel/download/processed/${taskId}`,
-        convertFileToPdf: (file) => {
+    downloadProcessedDocument: (taskId) => {
+      return apiClient.get(`/excel/download/processed/${taskId}`, {
+        responseType: 'blob'
+      });
+    },
+    convertFileToPdf: (file) => {
       const formData = new FormData();
       formData.append('file', file);
       
@@ -391,15 +409,7 @@ const api = {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        convertFileToWord: (file) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      return apiClient.post('/excel/convert/to-word', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-    },
-        applyTemplate: (templateId, data, outputFormat = 'xlsx') => {
+    applyTemplate: (templateId, data, outputFormat = 'xlsx') => {
       const formData = new FormData();
       formData.append('template_id', templateId);
       formData.append('data', typeof data === 'string' ? data : JSON.stringify(data));
@@ -409,13 +419,13 @@ const api = {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
     },
-        getTemplates: (category = null, params = {}) => {
+    getTemplates: (category = null, params = {}) => {
       if (category) {
         params.category = category;
       }
       return apiClient.get('/excel/templates', { params });
     },
-        mergeFiles: (files, outputFilename) => {
+    mergeFiles: (files, outputFilename) => {
       const formData = new FormData();
       files.forEach(file => {
         formData.append('files', file);
@@ -477,8 +487,11 @@ const api = {
       return apiClient.post('/files/crack', formData);
     },
     
-        downloadArchive: (archiveId) =>
-      `${API_BASE_URL}/files/archives/download/${archiveId}`,
+        downloadArchive: (archiveId) => {
+      return apiClient.get(`/files/archives/download/${archiveId}`, {
+        responseType: 'blob'
+      });
+    },
     
         deleteArchive: (archiveId, permanent = false) =>
       apiClient.delete(`/files/archives/${archiveId}?permanent=${permanent}`),
@@ -492,8 +505,11 @@ const api = {
     getCrackStatus: (taskId) =>
       apiClient.get(`/files/status/crack/${taskId}`),
     
-        downloadProcessedFile: (taskId) =>
-      `${API_BASE_URL}/files/download/processed/${taskId}`,
+    downloadProcessedFile: (taskId) => {
+      return apiClient.get(`/files/download/processed/${taskId}`, {
+        responseType: 'blob'
+      });
+    },
   },
 };
 

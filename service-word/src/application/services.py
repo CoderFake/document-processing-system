@@ -118,6 +118,36 @@ class DocumentService:
         """
         await self.document_repository.delete(document_id, user_id_check=user_id_check)
 
+    async def download_document(self, document_id: str, user_id_check: Optional[str] = None) -> Tuple[str, str, str]:
+        """
+        Tải xuống tài liệu.
+
+        Args:
+            document_id: ID của tài liệu
+            user_id_check: ID người dùng để kiểm tra quyền sở hữu (optional)
+
+        Returns:
+            Tuple chứa (file_path, media_type, filename)
+        """
+        try:
+            document_info, content = await self.document_repository.get(document_id, user_id_check=user_id_check)
+            
+            # Tạo file tạm thời để trả về
+            temp_dir = settings.TEMP_DIR
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            temp_filename = f"{uuid.uuid4()}_{document_info.original_filename}"
+            temp_path = os.path.join(temp_dir, temp_filename)
+            
+            with open(temp_path, "wb") as f:
+                f.write(content)
+            
+            return temp_path, document_info.file_type, document_info.original_filename
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi tải tài liệu {document_id}: {e}", exc_info=True)
+            raise StorageException(f"Không thể tải tài liệu: {str(e)}")
+
     async def convert_to_pdf(self, content: bytes, original_filename: str, user_id: str) -> Dict[str, Any]:
         """
         Chuyển đổi tài liệu Word sang PDF.

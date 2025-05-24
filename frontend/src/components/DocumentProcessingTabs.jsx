@@ -38,11 +38,9 @@ const DocumentProcessingTabs = ({
       const formData = new FormData();
       formData.append('file', file);
       
-      // Tải lên file vào MinIO
       const response = await api.uploadDocument(formData);
       
       if (response.data && response.data.id) {
-        // Lưu thông tin file để sử dụng sau
         setUploadedFile({
           id: response.data.id,
           name: file.name,
@@ -68,7 +66,6 @@ const DocumentProcessingTabs = ({
     try {
       let response;
       
-      // Gọi API xử lý phù hợp dựa trên loại tài liệu và thao tác
       switch (operation) {
         case 'to-pdf':
           if (documentType === 'word') {
@@ -85,7 +82,6 @@ const DocumentProcessingTabs = ({
           }
           break;
         case 'watermark':
-          // Xử lý thêm watermark (cần bổ sung tham số)
           const watermarkText = prompt('Nhập nội dung watermark:');
           if (!watermarkText) return;
           
@@ -95,7 +91,6 @@ const DocumentProcessingTabs = ({
           
           response = await api.addWatermark(formData);
           break;
-        // Thêm các thao tác khác tùy theo loại tài liệu
       }
       
       if (response && response.data && response.data.task_id) {
@@ -195,7 +190,29 @@ const DocumentProcessingTabs = ({
             </div>
             <button 
               className="text-primary-600 hover:text-primary-700"
-              onClick={() => window.open(api.downloadDocument(uploadedFile.id), '_blank')}
+              onClick={async () => {
+                try {
+                  const response = await api.downloadDocument(uploadedFile.id);
+                  
+                  // Tạo blob URL từ response
+                  const blob = new Blob([response.data], { 
+                    type: response.headers['content-type'] || 'application/octet-stream' 
+                  });
+                  const url = window.URL.createObjectURL(blob);
+                  
+                  // Tạo link tạm thời để download
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = response.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || uploadedFile.name;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  window.URL.revokeObjectURL(url);
+                } catch (error) {
+                  console.error('Lỗi khi tải xuống:', error);
+                  showError('Lỗi khi tải xuống tài liệu');
+                }
+              }}
             >
               <FiDownload className="w-5 h-5" />
             </button>

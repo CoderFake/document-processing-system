@@ -17,27 +17,26 @@ from infrastructure.rabbitmq_client import RabbitMQClient
 
 router = APIRouter()
 
-def get_user_id_from_header(x_user_id: Optional[str] = Header(None, alias="X-User-ID")) -> int:
-    """Extract user_id from X-User-ID header and validate it."""
+def get_user_id_from_header(x_user_id: Optional[str] = Header(None, alias="X-User-ID")) -> str:
+    """Extract user_id from X-User-ID header and validate it as UUID."""
     if not x_user_id:
         raise HTTPException(status_code=400, detail="X-User-ID header is required")
     try:
-        user_id = str(x_user_id)
-        if user_id <= 0:
-            raise ValueError("User ID must be positive")
-        return user_id
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="X-User-ID header must be a valid positive integer")
+        # Validate UUID format
+        uuid.UUID(x_user_id)
+        return x_user_id
+    except ValueError:
+        raise HTTPException(status_code=400, detail="X-User-ID header must be a valid UUID")
 
 def get_document_service(request: Request):
     """Create ExcelDocumentService with proper dependencies."""
-    db_pool = request.app.state.db_pool
-    if not db_pool:
-        raise HTTPException(status_code=503, detail="Database connection pool is not available.")
+    db_session_factory = request.app.state.db_session_factory
+    if not db_session_factory:
+        raise HTTPException(status_code=503, detail="Database session factory is not available.")
     
     minio_client = MinioClient()
     rabbitmq_client = RabbitMQClient()
-    document_repo = ExcelDocumentRepository(db_pool)  # Updated constructor
+    document_repo = ExcelDocumentRepository(db_session_factory)  # Updated constructor
     return ExcelDocumentService(document_repo, minio_client, rabbitmq_client)
 
 def get_template_service():

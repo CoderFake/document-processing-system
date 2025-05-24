@@ -61,14 +61,28 @@ const PDFPage = () => {
   };
   
   const handleDownloadDocument = async (e, documentId) => {
-    e.stopPropagation(); // Ngăn chặn sự kiện click lan toả đến document row
+    e.stopPropagation();
     
     try {
-      // Sử dụng window.open để mở trong tab mới - tự động chia sẻ cookies/auth với tab hiện tại
-      window.open(api.pdf.downloadDocument(documentId), '_blank');
+      const response = await api.pdf.downloadDocument(documentId);
+      
+      // Tạo blob URL từ response
+      const blob = new Blob([response.data], { 
+        type: response.headers['content-type'] || 'application/pdf' 
+      });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Tạo link tạm thời để download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || `document_${documentId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Lỗi khi tải xuống tài liệu:', error);
-      showError('Không thể tải xuống tài liệu', 'Lỗi tải xuống');
+      showError('Không thể tải xuống tài liệu');
     }
   };
   

@@ -62,10 +62,23 @@ const ExcelPage = () => {
     e.stopPropagation();
     
     try {
-      window.open(api.excel.downloadDocument(documentId), '_blank');
+      const response = await api.excel.downloadDocument(documentId);
+      
+      const blob = new Blob([response.data], { 
+        type: response.headers['content-type'] || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      const url = window.URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || `document_${documentId}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Lỗi khi tải xuống tài liệu:', error);
-      showError('Không thể tải xuống tài liệu', 'Lỗi tải xuống');
+      console.error('Lỗi khi tải xuống:', error);
+      showError('Lỗi khi tải xuống tài liệu');
     }
   };
   

@@ -77,16 +77,28 @@ const TaskProgress = ({ taskId, getTaskStatus, downloadUrl, onCompleted }) => {
       {status === 'completed' && downloadUrl && (
         <div className="mt-3 flex justify-end">
           <button 
-            onClick={() => {
-                            const iframe = document.createElement('iframe');
-              iframe.style.display = 'none';
-              document.body.appendChild(iframe);
-              
-                            iframe.src = downloadUrl();
-              
-                            setTimeout(() => {
-                document.body.removeChild(iframe);
-              }, 1000);
+            onClick={async () => {
+              try {
+                const response = await downloadUrl();
+                
+                // Tạo blob URL từ response
+                const blob = new Blob([response.data], { 
+                  type: response.headers['content-type'] || 'application/octet-stream' 
+                });
+                const url = window.URL.createObjectURL(blob);
+                
+                // Tạo link tạm thời để download
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = response.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || `processed_${taskId}`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+              } catch (error) {
+                console.error('Lỗi khi tải xuống:', error);
+                showError('Lỗi khi tải xuống file đã xử lý');
+              }
             }}
             className="flex items-center px-3 py-1.5 text-sm text-white bg-primary-600 rounded-md hover:bg-primary-700"
           >

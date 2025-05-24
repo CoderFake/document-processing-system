@@ -1,7 +1,10 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import asyncpg
+
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from domain.models import Base
+
 from core.config import settings
 from api.routes import router as api_router
 
@@ -13,31 +16,42 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Database pool state
-app.state.db_pool = None
+# Database engine and session factory
+app.state.db_engine = None
+app.state.db_session_factory = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Sự kiện khi ứng dụng khởi động - Tạo DB pool."""
+    """Sự kiện khi ứng dụng khởi động - Tạo DB engine và session factory."""
     try:
-        # Các giá trị DB_POOL_... nên được thêm vào Settings nếu chưa có
-        app.state.db_pool = await asyncpg.create_pool(
-            dsn=settings.DATABASE_URL,
-            min_size=getattr(settings, 'DB_POOL_MIN_SIZE', 1),
-            max_size=getattr(settings, 'DB_POOL_MAX_SIZE', 10),
-            timeout=getattr(settings, 'DB_TIMEOUT', 30),
-            command_timeout=getattr(settings, 'DB_COMMAND_TIMEOUT', 5)
+        # Create async engine
+        app.state.db_engine = create_async_engine(
+            settings.DATABASE_URL,
+            echo=False,
+            pool_size=getattr(settings, 'DB_POOL_MIN_SIZE', 5),
+            max_overflow=getattr(settings, 'DB_POOL_MAX_SIZE', 10),
         )
-        print("Connection pool to PostgreSQL started for service-files.")
+        
+        # Create session factory
+        app.state.db_session_factory = async_sessionmaker(
+            app.state.db_engine,
+            expire_on_commit=False
+        )
+        
+        # Create tables
+        async with app.state.db_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        
+        print("SQLAlchemy async engine started for service-files.")
     except Exception as e:
         print(f"Could not connect to PostgreSQL for service-files: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Sự kiện khi ứng dụng tắt - Đóng DB pool."""
-    if app.state.db_pool:
-        await app.state.db_pool.close()
-        print("Connection pool to PostgreSQL closed for service-files.")
+    """Sự kiện khi ứng dụng tắt - Đóng DB engine."""
+    if app.state.db_engine:
+        await app.state.db_engine.dispose()
+        print("SQLAlchemy async engine closed for service-files.")
 
 app.add_middleware(
     CORSMiddleware,

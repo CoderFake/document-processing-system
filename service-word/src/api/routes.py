@@ -24,25 +24,25 @@ logger = logging.getLogger(__name__)
 def get_document_service(request: Request) -> DocumentService:
     minio_client = MinioClient()
     rabbitmq_client = RabbitMQClient()
-    db_pool = request.app.state.db_pool
-    if not db_pool:
-        logger.error("Lỗi nghiêm trọng: Database connection pool không khả dụng trong get_document_service.")
-        raise HTTPException(status_code=503, detail="Database connection pool không khả dụng.")
+    db_session_factory = request.app.state.db_session_factory
+    if not db_session_factory:
+        logger.error("Lỗi nghiêm trọng: Database session factory không khả dụng trong get_document_service.")
+        raise HTTPException(status_code=503, detail="Database session factory không khả dụng.")
     
-    document_repo = DocumentRepository(minio_client, db_pool)
+    document_repo = DocumentRepository(minio_client, db_session_factory)
     return DocumentService(document_repo, minio_client, rabbitmq_client)
 
 
 def get_template_service(request: Request) -> TemplateService:
     minio_client = MinioClient()
     rabbitmq_client = RabbitMQClient()
-    db_pool = request.app.state.db_pool
+    db_session_factory = request.app.state.db_session_factory
 
-    if not db_pool:
-        logger.error("Lỗi nghiêm trọng: Database connection pool không khả dụng trong get_template_service.")
-        raise HTTPException(status_code=503, detail="Database connection pool không khả dụng.")
+    if not db_session_factory:
+        logger.error("Lỗi nghiêm trọng: Database session factory không khả dụng trong get_template_service.")
+        raise HTTPException(status_code=503, detail="Database session factory không khả dụng.")
 
-    document_repo = DocumentRepository(minio_client, db_pool)
+    document_repo = DocumentRepository(minio_client, db_session_factory)
     
     template_repo = TemplateRepository(minio_client)
     

@@ -201,3 +201,82 @@ class MinioClient:
             return url
         except S3Error as e:
             raise StorageException(f"Không thể tạo URL có chữ ký trước: {str(e)}")
+
+    # Additional methods for compatibility with ExcelDocumentService
+    async def upload_file(self, file_path: str, bucket_name: str, object_name: str, content_type: str = None) -> str:
+        """
+        Upload file từ đường dẫn lên MinIO.
+        
+        Args:
+            file_path: Đường dẫn file cần upload
+            bucket_name: Tên bucket
+            object_name: Tên object trong bucket
+            content_type: MIME type của file
+            
+        Returns:
+            Object name đã upload
+        """
+        try:
+            # Ensure bucket exists
+            self._ensure_bucket_exists(bucket_name)
+            
+            # Get file size
+            file_size = os.path.getsize(file_path)
+            
+            # Determine content type if not provided
+            if not content_type:
+                if object_name.endswith('.xlsx'):
+                    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                elif object_name.endswith('.xls'):
+                    content_type = "application/vnd.ms-excel"
+                else:
+                    content_type = "application/octet-stream"
+            
+            # Upload file
+            with open(file_path, 'rb') as file_data:
+                self.client.put_object(
+                    bucket_name=bucket_name,
+                    object_name=object_name,
+                    data=file_data,
+                    length=file_size,
+                    content_type=content_type
+                )
+            
+            return object_name
+        except Exception as e:
+            raise StorageException(f"Không thể upload file {file_path}: {str(e)}")
+
+    async def download_file(self, bucket_name: str, object_name: str, download_path: str) -> None:
+        """
+        Download file từ MinIO về đường dẫn local.
+        
+        Args:
+            bucket_name: Tên bucket
+            object_name: Tên object trong bucket  
+            download_path: Đường dẫn để lưu file
+        """
+        try:
+            response = self.client.get_object(bucket_name, object_name)
+            
+            # Write content to file
+            with open(download_path, 'wb') as file_data:
+                for data in response.stream(32*1024):
+                    file_data.write(data)
+            
+            response.close()
+            response.release_conn()
+        except Exception as e:
+            raise StorageException(f"Không thể download file {object_name}: {str(e)}")
+
+    async def delete_file(self, bucket_name: str, object_name: str) -> None:
+        """
+        Xóa file khỏi MinIO.
+        
+        Args:
+            bucket_name: Tên bucket
+            object_name: Tên object trong bucket
+        """
+        try:
+            self.client.remove_object(bucket_name, object_name)
+        except Exception as e:
+            raise StorageException(f"Không thể xóa file {object_name}: {str(e)}")

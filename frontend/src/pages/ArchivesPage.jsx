@@ -167,31 +167,54 @@ const ArchivesPage = () => {
   };
   
     const handleDownloadArchive = async (e, archiveId) => {
-    e.stopPropagation();     
+    e.stopPropagation();
+    
     try {
-            window.open(api.archives.downloadArchive(archiveId), '_blank');
+      const response = await api.archives.downloadArchive(archiveId);
+      
+      // Tạo blob URL từ response
+      const blob = new Blob([response.data], { 
+        type: response.headers['content-type'] || 'application/zip' 
+      });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Tạo link tạm thời để download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || `archive_${archiveId}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Lỗi khi tải xuống tệp nén:', error);
-      showError('Không thể tải xuống tệp nén', 'Lỗi tải xuống');
+      console.error('Lỗi khi tải xuống:', error);
+      showError('Lỗi khi tải xuống archive');
     }
   };
   
-    const handleDownloadProcessedFile = (taskId) => {
+    const handleDownloadProcessedFile = async (taskId) => {
     if (!taskId) return;
     
     try {
-            const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      document.body.appendChild(iframe);
+      const response = await api.archives.downloadProcessedFile(taskId);
       
-            iframe.src = api.archives.downloadProcessedFile(taskId);
+      // Tạo blob URL từ response
+      const blob = new Blob([response.data], { 
+        type: response.headers['content-type'] || 'application/octet-stream' 
+      });
+      const url = window.URL.createObjectURL(blob);
       
-            setTimeout(() => {
-        document.body.removeChild(iframe);
-      }, 1000);
+      // Tạo link tạm thời để download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || `processed_${taskId}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Lỗi khi tải xuống tệp đã xử lý:', error);
-      showError('Không thể tải xuống tệp đã xử lý', 'Lỗi tải xuống');
+      showError('Không thể tải xuống tệp đã xử lý');
     }
   };
   

@@ -6,10 +6,10 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update as sqlalchemy_update, delete as sqlalchemy_delete, and_, func
+from sqlalchemy import update as sqlalchemy_update, delete as sqlalchemy_delete, and_, func, text
 from sqlalchemy.orm import sessionmaker
 
-from domain.models import PDFDocumentInfo, PNGDocumentInfo, StampInfo, PDFProcessingInfo, MergeInfo
+from domain.models import PDFDocumentInfo, PNGDocumentInfo, StampInfo, PDFProcessingInfo, MergeInfo, DBDocument
 from domain.exceptions import (
     DocumentNotFoundException, ImageNotFoundException, StampNotFoundException,
     StorageException, PDFPasswordProtectedException, WrongPasswordException
@@ -60,7 +60,8 @@ class PDFDocumentRepository:
                     # Upload to MinIO
                     await self.minio_client.upload_pdf_document(
                         content=content,
-                        filename=document_info.original_filename
+                        filename=document_info.original_filename,
+                        object_name_override=object_name
                     )
                     
                     # Update file info
@@ -75,32 +76,36 @@ class PDFDocumentRepository:
                     # Prepare metadata
                     metadata_json = json.dumps(document_info.metadata) if document_info.metadata else None
                     
-                    # Insert into database
-                    query = """
-                        INSERT INTO documents (
-                            id, storage_id, document_category, title, description,
-                            file_size, file_type, storage_path, original_filename,
-                            doc_metadata, created_at, updated_at, user_id,
-                            page_count, is_encrypted, version, checksum
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-                        RETURNING id, created_at, updated_at
-                    """
-                    
-                    record = await session.execute(
-                        query,
-                        doc_id, storage_id, "pdf", document_info.title, document_info.description,
-                        document_info.file_size, document_info.file_type, object_name,
-                        document_info.original_filename, metadata_json,
-                        document_info.created_at, document_info.updated_at, user_id,
-                        document_info.page_count, document_info.is_encrypted,
-                        document_info.version or 1, document_info.checksum
+                    # Create DBDocument instance using SQLAlchemy ORM
+                    db_document = DBDocument(
+                        id=doc_id,
+                        storage_id=storage_id,
+                        document_category="pdf",
+                        title=document_info.title,
+                        description=document_info.description,
+                        file_size=document_info.file_size,
+                        file_type=document_info.file_type,
+                        storage_path=object_name,
+                        original_filename=document_info.original_filename,
+                        doc_metadata=metadata_json,
+                        created_at=document_info.created_at,
+                        updated_at=document_info.updated_at,
+                        user_id=user_id,
+                        page_count=document_info.page_count,
+                        is_encrypted=document_info.is_encrypted,
+                        version=document_info.version or 1,
+                        checksum=document_info.checksum
                     )
                     
-                    result = record.fetchone()
-                    if result:
-                        document_info.id = str(result[0])
-                        document_info.created_at = result[1]
-                        document_info.updated_at = result[2]
+                    # Add to session and commit
+                    session.add(db_document)
+                    await session.flush()
+                    await session.refresh(db_document)
+                    
+                    # Update document_info with saved data
+                    document_info.id = str(db_document.id)
+                    document_info.created_at = db_document.created_at
+                    document_info.updated_at = db_document.updated_at
                     
                     return document_info
                     
@@ -114,39 +119,49 @@ class PDFDocumentRepository:
         """
         async with self.async_session_factory() as session:
             try:
-                # Build query
-                base_query = "SELECT * FROM documents WHERE id = $1 AND document_category = $2"
-                params = [document_id, "pdf"]
+                # Build query using SQLAlchemy ORM
+                query = select(DBDocument).where(
+                    (DBDocument.id == document_id) & 
+                    (DBDocument.document_category == "pdf")
+                )
                 
                 if user_id_check:
-                    base_query += " AND user_id = $3"
-                    params.append(user_id_check)
+                    query = query.where(DBDocument.user_id == user_id_check)
                 
-                result = await session.execute(base_query, params)
-                record = result.fetchone()
+                result = await session.execute(query)
+                record = result.scalar_one_or_none()
                 
                 if not record:
                     return None, None
                 
-                # Convert to dict
-                columns = result.keys()
-                doc_data = dict(zip(columns, record))
-                
                 # Parse metadata
-                if doc_data.get('doc_metadata'):
+                metadata = {}
+                if record.doc_metadata:
                     try:
-                        doc_data['metadata'] = json.loads(doc_data['doc_metadata'])
+                        metadata = json.loads(record.doc_metadata)
                     except json.JSONDecodeError:
-                        doc_data['metadata'] = {}
-                else:
-                    doc_data['metadata'] = {}
+                        metadata = {}
                 
-                # Convert UUID fields to string
-                doc_data['id'] = str(doc_data['id'])
-                doc_data['storage_id'] = str(doc_data['storage_id'])
-                doc_data['user_id'] = str(doc_data['user_id'])
+                doc_data = {
+                    'id': str(record.id),
+                    'storage_id': str(record.storage_id),
+                    'title': record.title,
+                    'description': record.description,
+                    'created_at': record.created_at,
+                    'updated_at': record.updated_at,
+                    'file_size': record.file_size,
+                    'page_count': record.page_count,
+                    'is_encrypted': record.is_encrypted,
+                    'storage_path': record.storage_path,
+                    'original_filename': record.original_filename,
+                    'metadata': metadata,
+                    'user_id': str(record.user_id),
+                    'file_type': record.file_type,
+                    'document_category': record.document_category,
+                    'version': record.version,
+                    'checksum': record.checksum
+                }
                 
-                # Create PDFDocumentInfo
                 document_info = PDFDocumentInfo(**doc_data)
                 
                 # Download from MinIO
@@ -167,62 +182,54 @@ class PDFDocumentRepository:
         """
         async with self.async_session_factory() as session:
             try:
-                # Build conditions
-                where_conditions = ["document_category = 'pdf'"]
-                params = []
-                param_count = 1
+                query = select(DBDocument).where(DBDocument.document_category == "pdf")
                 
                 if user_id:
-                    where_conditions.append(f"user_id = ${param_count}")
-                    params.append(user_id)
-                    param_count += 1
+                    query = query.where(DBDocument.user_id == user_id)
                 
                 if search:
-                    search_condition = f"(LOWER(title) LIKE ${param_count} OR LOWER(description) LIKE ${param_count})"
-                    where_conditions.append(search_condition)
                     search_term = f"%{search.lower()}%"
-                    params.extend([search_term, search_term])
-                    param_count += 2
+                    query = query.where(
+                        (func.lower(DBDocument.title).like(search_term)) |
+                        (func.lower(DBDocument.description).like(search_term))
+                    )
                 
-                where_clause = " AND ".join(where_conditions)
+                count_query = select(func.count()).select_from(query.subquery())
+                count_result = await session.execute(count_query)
+                total_count = count_result.scalar() or 0
                 
-                # Count query
-                count_query = f"SELECT COUNT(*) as total FROM documents WHERE {where_clause}"
-                count_result = await session.execute(count_query, params)
-                count_record = count_result.fetchone()
-                total_count = count_record[0] if count_record else 0
+                list_query = query.order_by(DBDocument.created_at.desc()).offset(skip).limit(limit)
+                result = await session.execute(list_query)
+                records = result.scalars().all()
                 
-                # List query
-                list_query = f"""
-                    SELECT * FROM documents 
-                    WHERE {where_clause}
-                    ORDER BY created_at DESC 
-                    LIMIT ${param_count} OFFSET ${param_count + 1}
-                """
-                params.extend([limit, skip])
-                
-                result = await session.execute(list_query, params)
-                records = result.fetchall()
-                columns = result.keys()
-                
-                # Convert to PDFDocumentInfo objects
                 documents = []
                 for record in records:
-                    doc_data = dict(zip(columns, record))
-                    
-                    # Parse metadata
-                    if doc_data.get('doc_metadata'):
+                    metadata = {}
+                    if record.doc_metadata:
                         try:
-                            doc_data['metadata'] = json.loads(doc_data['doc_metadata'])
+                            metadata = json.loads(record.doc_metadata)
                         except json.JSONDecodeError:
-                            doc_data['metadata'] = {}
-                    else:
-                        doc_data['metadata'] = {}
+                            metadata = {}
                     
-                    # Convert UUID fields
-                    doc_data['id'] = str(doc_data['id'])
-                    doc_data['storage_id'] = str(doc_data['storage_id'])
-                    doc_data['user_id'] = str(doc_data['user_id'])
+                    doc_data = {
+                        'id': str(record.id),
+                        'storage_id': str(record.storage_id),
+                        'title': record.title,
+                        'description': record.description,
+                        'created_at': record.created_at,
+                        'updated_at': record.updated_at,
+                        'file_size': record.file_size,
+                        'page_count': record.page_count,
+                        'is_encrypted': record.is_encrypted,
+                        'storage_path': record.storage_path,
+                        'original_filename': record.original_filename,
+                        'metadata': metadata,
+                        'user_id': str(record.user_id),
+                        'file_type': record.file_type,
+                        'document_category': record.document_category,
+                        'version': record.version,
+                        'checksum': record.checksum
+                    }
                     
                     documents.append(PDFDocumentInfo(**doc_data))
                 
@@ -246,61 +253,59 @@ class PDFDocumentRepository:
                     document_info.updated_at = datetime.now()
                     metadata_json = json.dumps(document_info.metadata) if document_info.metadata else None
                     
-                    # Build query
-                    set_clauses = [
-                        "title = $1",
-                        "description = $2",
-                        "doc_metadata = $3", 
-                        "updated_at = $4",
-                        "page_count = $5",
-                        "is_encrypted = $6"
-                    ]
-                    
-                    params = [
-                        document_info.title,
-                        document_info.description,
-                        metadata_json,
-                        document_info.updated_at,
-                        document_info.page_count,
-                        document_info.is_encrypted
-                    ]
-                    
-                    where_conditions = ["id = $7", "document_category = $8"]
-                    params.extend([document_info.id, "pdf"])
-                    param_count = 9
+                    # Build query using SQLAlchemy ORM
+                    query = select(DBDocument).where(
+                        (DBDocument.id == document_info.id) & 
+                        (DBDocument.document_category == "pdf")
+                    )
                     
                     if user_id_check:
-                        where_conditions.append(f"user_id = ${param_count}")
-                        params.append(user_id_check)
+                        query = query.where(DBDocument.user_id == user_id_check)
                     
-                    query = f"""
-                        UPDATE documents 
-                        SET {', '.join(set_clauses)}
-                        WHERE {' AND '.join(where_conditions)}
-                        RETURNING *
-                    """
+                    result = await session.execute(query)
+                    db_document = result.scalar_one_or_none()
                     
-                    result = await session.execute(query, params)
-                    record = result.fetchone()
-                    
-                    if not record:
+                    if not db_document:
                         raise DocumentNotFoundException(f"Tài liệu PDF {document_info.id} không tìm thấy hoặc không có quyền cập nhật.")
                     
-                    # Convert result
-                    columns = result.keys()
-                    doc_data = dict(zip(columns, record))
+                    # Update fields
+                    db_document.title = document_info.title
+                    db_document.description = document_info.description
+                    db_document.doc_metadata = metadata_json
+                    db_document.updated_at = document_info.updated_at
+                    db_document.page_count = document_info.page_count
+                    db_document.is_encrypted = document_info.is_encrypted
                     
-                    if doc_data.get('doc_metadata'):
+                    await session.flush()
+                    await session.refresh(db_document)
+                    
+                    # Convert back to PDFDocumentInfo
+                    metadata = {}
+                    if db_document.doc_metadata:
                         try:
-                            doc_data['metadata'] = json.loads(doc_data['doc_metadata'])
+                            metadata = json.loads(db_document.doc_metadata)
                         except json.JSONDecodeError:
-                            doc_data['metadata'] = {}
-                    else:
-                        doc_data['metadata'] = {}
+                            metadata = {}
                     
-                    doc_data['id'] = str(doc_data['id'])
-                    doc_data['storage_id'] = str(doc_data['storage_id'])
-                    doc_data['user_id'] = str(doc_data['user_id'])
+                    doc_data = {
+                        'id': str(db_document.id),
+                        'storage_id': str(db_document.storage_id),
+                        'title': db_document.title,
+                        'description': db_document.description,
+                        'created_at': db_document.created_at,
+                        'updated_at': db_document.updated_at,
+                        'file_size': db_document.file_size,
+                        'page_count': db_document.page_count,
+                        'is_encrypted': db_document.is_encrypted,
+                        'storage_path': db_document.storage_path,
+                        'original_filename': db_document.original_filename,
+                        'metadata': metadata,
+                        'user_id': str(db_document.user_id),
+                        'file_type': db_document.file_type,
+                        'document_category': db_document.document_category,
+                        'version': db_document.version,
+                        'checksum': db_document.checksum
+                    }
                     
                     return PDFDocumentInfo(**doc_data)
                     
@@ -317,34 +322,26 @@ class PDFDocumentRepository:
         async with self.async_session_factory() as session:
             async with session.begin():
                 try:
-                    # Get document info
-                    get_query = "SELECT storage_path FROM documents WHERE id = $1 AND document_category = $2"
-                    params = [document_id, "pdf"]
+                    # Get document info using SQLAlchemy ORM
+                    query = select(DBDocument).where(
+                        (DBDocument.id == document_id) & 
+                        (DBDocument.document_category == "pdf")
+                    )
                     
                     if user_id_check:
-                        get_query += " AND user_id = $3"
-                        params.append(user_id_check)
+                        query = query.where(DBDocument.user_id == user_id_check)
                     
-                    result = await session.execute(get_query, params)
-                    record = result.fetchone()
+                    result = await session.execute(query)
+                    db_document = result.scalar_one_or_none()
                     
-                    if not record:
+                    if not db_document:
                         raise DocumentNotFoundException(f"Tài liệu PDF {document_id} không tìm thấy hoặc không có quyền xóa.")
                     
-                    storage_path = record[0]
+                    storage_path = db_document.storage_path
                     
                     # Delete from database
-                    delete_query = "DELETE FROM documents WHERE id = $1 AND document_category = $2"
-                    delete_params = [document_id, "pdf"]
-                    
-                    if user_id_check:
-                        delete_query += " AND user_id = $3"
-                        delete_params.append(user_id_check)
-                    
-                    delete_result = await session.execute(delete_query, delete_params)
-                    
-                    if delete_result.rowcount == 0:
-                        raise DocumentNotFoundException(f"Không thể xóa tài liệu PDF {document_id}.")
+                    await session.delete(db_document)
+                    await session.flush()
                     
                     # Delete from MinIO
                     if storage_path:
@@ -414,31 +411,34 @@ class PNGDocumentRepository:
                     # Prepare metadata
                     metadata_json = json.dumps(document_info.metadata) if document_info.metadata else None
                     
-                    # Insert into database
-                    query = """
-                        INSERT INTO documents (
-                            id, storage_id, document_category, title, description,
-                            file_size, file_type, storage_path, original_filename,
-                            doc_metadata, created_at, updated_at, user_id,
-                            version, checksum
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-                        RETURNING id, created_at, updated_at
-                    """
-                    
-                    record = await session.execute(
-                        query,
-                        doc_id, storage_id, "png", document_info.title, document_info.description,
-                        document_info.file_size, document_info.file_type, object_name,
-                        document_info.original_filename, metadata_json,
-                        document_info.created_at, document_info.updated_at, user_id,
-                        document_info.version or 1, document_info.checksum
+                    # Create DBDocument instance using SQLAlchemy ORM
+                    db_document = DBDocument(
+                        id=doc_id,
+                        storage_id=storage_id,
+                        document_category="png",
+                        title=document_info.title,
+                        description=document_info.description,
+                        file_size=document_info.file_size,
+                        file_type=document_info.file_type,
+                        storage_path=object_name,
+                        original_filename=document_info.original_filename,
+                        doc_metadata=metadata_json,
+                        created_at=document_info.created_at,
+                        updated_at=document_info.updated_at,
+                        user_id=user_id,
+                        version=document_info.version or 1,
+                        checksum=document_info.checksum
                     )
                     
-                    result = record.fetchone()
-                    if result:
-                        document_info.id = str(result[0])
-                        document_info.created_at = result[1]
-                        document_info.updated_at = result[2]
+                    # Add to session and commit
+                    session.add(db_document)
+                    await session.flush()
+                    await session.refresh(db_document)
+                    
+                    # Update document_info with saved data
+                    document_info.id = str(db_document.id)
+                    document_info.created_at = db_document.created_at
+                    document_info.updated_at = db_document.updated_at
                     
                     return document_info
                     
@@ -452,39 +452,48 @@ class PNGDocumentRepository:
         """
         async with self.async_session_factory() as session:
             try:
-                # Build query
-                base_query = "SELECT * FROM documents WHERE id = $1 AND document_category = $2"
-                params = [document_id, "png"]
+                # Build query using SQLAlchemy ORM
+                query = select(DBDocument).where(
+                    (DBDocument.id == document_id) & 
+                    (DBDocument.document_category == "png")
+                )
                 
                 if user_id_check:
-                    base_query += " AND user_id = $3"
-                    params.append(user_id_check)
+                    query = query.where(DBDocument.user_id == user_id_check)
                 
-                result = await session.execute(base_query, params)
-                record = result.fetchone()
+                result = await session.execute(query)
+                record = result.scalar_one_or_none()
                 
                 if not record:
                     return None, None
                 
-                # Convert to dict
-                columns = result.keys()
-                doc_data = dict(zip(columns, record))
-                
                 # Parse metadata
-                if doc_data.get('doc_metadata'):
+                metadata = {}
+                if record.doc_metadata:
                     try:
-                        doc_data['metadata'] = json.loads(doc_data['doc_metadata'])
+                        metadata = json.loads(record.doc_metadata)
                     except json.JSONDecodeError:
-                        doc_data['metadata'] = {}
-                else:
-                    doc_data['metadata'] = {}
-                
-                # Convert UUID fields to string
-                doc_data['id'] = str(doc_data['id'])
-                doc_data['storage_id'] = str(doc_data['storage_id'])
-                doc_data['user_id'] = str(doc_data['user_id'])
+                        metadata = {}
                 
                 # Create PNGDocumentInfo
+                doc_data = {
+                    'id': str(record.id),
+                    'storage_id': str(record.storage_id),
+                    'title': record.title,
+                    'description': record.description,
+                    'created_at': record.created_at,
+                    'updated_at': record.updated_at,
+                    'file_size': record.file_size,
+                    'storage_path': record.storage_path,
+                    'original_filename': record.original_filename,
+                    'metadata': metadata,
+                    'user_id': str(record.user_id),
+                    'file_type': record.file_type,
+                    'document_category': record.document_category,
+                    'version': record.version,
+                    'checksum': record.checksum
+                }
+                
                 document_info = PNGDocumentInfo(**doc_data)
                 
                 # Download from MinIO
@@ -685,6 +694,21 @@ class PDFProcessingRepository:
             logger.error(f"Lỗi khi lấy thông tin xử lý PDF {processing_id}: {e}", exc_info=True)
             raise StorageException(f"Không thể lấy thông tin xử lý PDF {processing_id}: {str(e)}")
 
+    async def update(self, processing_info: PDFProcessingInfo) -> PDFProcessingInfo:
+        """
+        Cập nhật thông tin xử lý PDF
+        """
+        try:
+            if not processing_info.id:
+                raise ValueError("Processing ID is required for update.")
+            
+            self.processings[processing_info.id] = processing_info
+            self._save_metadata()
+            return processing_info
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật thông tin xử lý PDF {processing_info.id}: {e}", exc_info=True)
+            raise StorageException(f"Không thể cập nhật thông tin xử lý PDF: {str(e)}")
+
 class MergeRepository:
     """
     Repository để làm việc với thông tin gộp tài liệu PDF
@@ -753,3 +777,18 @@ class MergeRepository:
         except Exception as e:
             logger.error(f"Lỗi khi lấy thông tin gộp PDF {merge_id}: {e}", exc_info=True)
             raise StorageException(f"Không thể lấy thông tin gộp PDF {merge_id}: {str(e)}")
+
+    async def update(self, merge_info: MergeInfo) -> MergeInfo:
+        """
+        Cập nhật thông tin gộp tài liệu PDF
+        """
+        try:
+            if not merge_info.id:
+                raise ValueError("Merge ID is required for update.")
+            
+            self.merges[merge_info.id] = merge_info
+            self._save_metadata()
+            return merge_info
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật thông tin gộp PDF {merge_info.id}: {e}", exc_info=True)
+            raise StorageException(f"Không thể cập nhật thông tin gộp PDF: {str(e)}")

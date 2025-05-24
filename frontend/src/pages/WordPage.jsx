@@ -61,12 +61,24 @@ const WordPage = () => {
   
   const handleDownloadDocument = async (e, documentId) => {
     e.stopPropagation();
-    
     try {
-      window.open(api.word.downloadDocument(documentId), '_blank');
+      const response = await api.word.downloadDocument(documentId);
+      
+      const blob = new Blob([response.data], { 
+        type: response.headers['content-type'] || 'application/octet-stream' 
+      });
+      const url = window.URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || `document_${documentId}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Lỗi khi tải xuống tài liệu:', error);
-      showError('Không thể tải xuống tài liệu', 'Lỗi tải xuống');
+      console.error('Lỗi khi tải xuống:', error);
+      showError('Lỗi khi tải xuống tài liệu');
     }
   };
   

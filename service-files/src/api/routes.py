@@ -68,11 +68,11 @@ router = APIRouter()
 def get_file_service(request: Request):
     minio_client = MinioClient()
     rabbitmq_client = RabbitMQClient()
-    db_pool = request.app.state.db_pool
-    if not db_pool:
-        logger.error("DB connection pool is not available for FileService.")
-        raise HTTPException(status_code=503, detail="Database connection pool is not available.")
-    file_repo = FileRepository(minio_client, db_pool)
+    db_session_factory = request.app.state.db_session_factory
+    if not db_session_factory:
+        logger.error("DB session factory is not available for FileService.")
+        raise HTTPException(status_code=503, detail="Database session factory is not available.")
+    file_repo = FileRepository(minio_client, db_session_factory)
     return FileService(file_repo, minio_client, rabbitmq_client)
 
 
@@ -81,12 +81,12 @@ def get_archive_service(request: Request):
     rabbitmq_client = RabbitMQClient()
     processing_repo = ProcessingRepository(minio_client)
     
-    db_pool = request.app.state.db_pool
-    if not db_pool:
-        logger.error("DB connection pool is not available for ArchiveService.")
-        raise HTTPException(status_code=503, detail="Database connection pool is not available for ArchiveService.")
+    db_session_factory = request.app.state.db_session_factory
+    if not db_session_factory:
+        logger.error("DB session factory is not available for ArchiveService.")
+        raise HTTPException(status_code=503, detail="Database session factory is not available for ArchiveService.")
         
-    file_repo = FileRepository(minio_client, db_pool)
+    file_repo = FileRepository(minio_client, db_session_factory)
     service_client = ServiceClient()
     
     return ArchiveService(
@@ -104,10 +104,10 @@ def get_trash_service(request: Request):
     trash_repo = TrashRepository()
     cleanup_repo = CleanupJobRepository()
     
-    db_pool = request.app.state.db_pool
-    if not db_pool:
-        raise HTTPException(status_code=503, detail="Database connection pool is not available for TrashService.")
-    file_repo = FileRepository(minio_client, db_pool)
+    db_session_factory = request.app.state.db_session_factory
+    if not db_session_factory:
+        raise HTTPException(status_code=503, detail="Database session factory is not available for TrashService.")
+    file_repo = FileRepository(minio_client, db_session_factory)
     archive_repo = ArchiveRepository(minio_client)
     return TrashService(trash_repo, cleanup_repo, file_repo, archive_repo, minio_client, rabbitmq_client)
 
@@ -601,7 +601,7 @@ async def get_all_user_documents(
     limit: int = Query(100, ge=1, le=500),
     search: Optional[str] = Query(None),
     source_service_filter: Optional[str] = Query(None, description="Lọc theo service gốc, ví dụ: files, word, pdf, excel"),
-    file_repo: FileRepository = Depends(lambda request: FileRepository(MinioClient(), request.app.state.db_pool))
+    file_repo: FileRepository = Depends(lambda request: FileRepository(MinioClient(), request.app.state.db_session_factory))
 ):
     """
     Lấy tất cả các loại tài liệu thuộc về người dùng hiện tại.
@@ -632,7 +632,7 @@ async def get_documents_by_category(
     limit: int = Query(50, ge=1, le=200),
     search: Optional[str] = Query(None),
     source_service_filter: Optional[str] = Query(None, description="Lọc theo service gốc nếu cần"),
-    file_repo: FileRepository = Depends(lambda request: FileRepository(MinioClient(), request.app.state.db_pool))
+    file_repo: FileRepository = Depends(lambda request: FileRepository(MinioClient(), request.app.state.db_session_factory))
 ):
     """
     Lấy danh sách tài liệu thuộc một `document_category` cụ thể.
@@ -669,7 +669,7 @@ async def compress_all_user_documents_by_category(
     compression_type: str = Form("zip", description="Loại nén (zip)"),
     password: Optional[str] = Form(None, description="Mật khẩu bảo vệ file nén (nếu hỗ trợ)"),
 
-    file_repo: FileRepository = Depends(lambda r: FileRepository(MinioClient(), r.app.state.db_pool)),
+    file_repo: FileRepository = Depends(lambda r: FileRepository(MinioClient(), r.app.state.db_session_factory)),
     archive_service: ArchiveService = Depends(get_archive_service)
 ):
     """
