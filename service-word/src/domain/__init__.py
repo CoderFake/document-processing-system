@@ -1,4 +1,4 @@
-from .models import DocumentInfo, TemplateInfo, BatchProcessingInfo
+from .models import WordDocumentInfo as DocumentInfo, TemplateInfo, BatchProcessingInfo
 from .exceptions import DocumentNotFoundException, TemplateNotFoundException, StorageException
 
 __all__ = [

@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: List[str] = ["*"]
 
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/document_processing")
+    DEBUG: bool = os.getenv("APP_ENV", "development") == "development"
+
     # Cấu hình gRPC
     GRPC_PORT: int = 50051
     GRPC_WORKERS: int = 10

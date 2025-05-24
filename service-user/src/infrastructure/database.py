@@ -61,5 +61,4 @@ async def init_db():
                     await conn.execute(sa.text("ALTER TABLE users ADD COLUMN user_metadata TEXT"))
                     print("Đã thêm cột user_metadata.")
             except Exception as e2:
-                print(f"Không thể thêm cột user_metadata: {str(e2)}")
-                print("Vui lòng thêm cột thủ công nếu cần thiết.") 
+                print(f"Không thể thêm cột user_metadata: {str(e2)}") 

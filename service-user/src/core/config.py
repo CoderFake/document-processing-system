@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
     MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
     MINIO_USER_BUCKET: str = "user-profiles"
+    
+    # Service URLs
+    PDF_SERVICE_URL: str = os.getenv("PDF_SERVICE_URL", "http://service-pdf:10003")
+    WORD_SERVICE_URL: str = os.getenv("WORD_SERVICE_URL", "http://service-word:10001")
+    EXCEL_SERVICE_URL: str = os.getenv("EXCEL_SERVICE_URL", "http://service-excel:10002")
+    FILES_SERVICE_URL: str = os.getenv("FILES_SERVICE_URL", "http://service-files:10004")
 
     class Config:
         env_file = ".env"

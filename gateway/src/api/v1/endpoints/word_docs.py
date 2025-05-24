@@ -1,16 +1,14 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query
-from fastapi.responses import JSONResponse, FileResponse
-import httpx
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from typing import List, Optional, Dict, Any
-import os
-import tempfile
-import shutil
+import logging
 from core.config import settings
 from utils.client import ServiceClient
 from api.v1.endpoints.auth import get_current_user
 
 router = APIRouter()
 word_service = ServiceClient(settings.WORD_SERVICE_URL)
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", summary="Lấy danh sách tài liệu Word")
@@ -23,11 +21,12 @@ async def get_word_documents(
     """
     Lấy danh sách tài liệu Word từ hệ thống.
     """
-    params = {"skip": skip, "limit": limit, "user_id": current_user["id"]}
+    headers = {"X-User-ID": str(current_user["id"])}
+    params = {"skip": skip, "limit": limit}
     if search:
         params["search"] = search
 
-    response = await word_service.get("/documents", params=params)
+    response = await word_service.get("/documents", params=params, headers=headers)
     return response
 
 
@@ -36,7 +35,6 @@ async def upload_word_document(
         file: UploadFile = File(...),
         title: Optional[str] = Form(None),
         description: Optional[str] = Form(None),
-        background_tasks: BackgroundTasks = None,
         current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
@@ -45,23 +43,25 @@ async def upload_word_document(
     if not file.filename.endswith(('.doc', '.docx')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
+    headers = {"X-User-ID": str(current_user["id"])}
+    data_payload = {}
+    if title:
+        data_payload["title"] = title
+    if description:
+        data_payload["description"] = description
+
     response = await word_service.upload_file(
         "/documents/upload",
         file=file,
-        data={
-            "title": title, 
-            "description": description,
-            "user_id": str(current_user["id"])
-        }
+        data=data_payload,
+        headers=headers
     )
-
     return response
 
 
 @router.post("/convert/to-pdf", summary="Chuyển đổi tài liệu Word sang PDF")
 async def convert_word_to_pdf(
         file: UploadFile = File(...),
-        background_tasks: BackgroundTasks = None,
         current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
@@ -70,12 +70,13 @@ async def convert_word_to_pdf(
     if not file.filename.endswith(('.doc', '.docx')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
+    headers = {"X-User-ID": str(current_user["id"])}
     response = await word_service.upload_file(
         "/documents/convert/to-pdf",
         file=file,
-        data={"user_id": str(current_user["id"])}
+        data={},
+        headers=headers
     )
-
     return response
 
 
@@ -93,16 +94,17 @@ async def apply_word_template(
     - **data**: Dữ liệu JSON cho mẫu (dạng chuỗi JSON)
     - **output_format**: Định dạng đầu ra (docx, pdf)
     """
+    headers = {"X-User-ID": str(current_user["id"])}
+    json_payload = {
+        "template_id": template_id,
+        "data": data,
+        "output_format": output_format,
+    }
     response = await word_service.post(
         "/documents/templates/apply",
-        json={
-            "template_id": template_id,
-            "data": data,
-            "output_format": output_format,
-            "user_id": current_user["id"]
-        }
+        json_data=json_payload,
+        headers=headers
     )
-
     return response
 
 
@@ -125,17 +127,18 @@ async def add_watermark_to_word(
     if not file.filename.endswith(('.doc', '.docx')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .doc hoặc .docx")
 
+    headers = {"X-User-ID": str(current_user["id"])}
+    data_payload = {
+        "watermark_text": watermark_text,
+        "position": position,
+        "opacity": str(opacity),
+    }
     response = await word_service.upload_file(
         "/documents/watermark",
         file=file,
-        data={
-            "watermark_text": watermark_text,
-            "position": position,
-            "opacity": str(opacity),
-            "user_id": str(current_user["id"])
-        }
+        data=data_payload,
+        headers=headers
     )
-
     return response
 
 
@@ -149,11 +152,12 @@ async def get_word_templates(
     """
     Lấy danh sách mẫu tài liệu Word từ hệ thống.
     """
-    params = {"skip": skip, "limit": limit, "user_id": current_user["id"]}
+    headers = {"X-User-ID": str(current_user["id"])}
+    params = {"skip": skip, "limit": limit}
     if category:
         params["category"] = category
 
-    response = await word_service.get("/documents/templates", params=params)
+    response = await word_service.get("/documents/templates", params=params, headers=headers)
     return response
 
 
@@ -165,7 +169,9 @@ async def download_word_document(
     """
     Tải xuống tài liệu Word theo ID.
     """
-    return await word_service.get_file(f"/documents/download/{document_id}?user_id={current_user['id']}")
+    headers = {"X-User-ID": str(current_user["id"])}
+    response = await word_service.get_file(f"/documents/download/{document_id}", headers=headers)
+    return response
 
 
 @router.delete("/{document_id}", summary="Xóa tài liệu Word")
@@ -176,7 +182,8 @@ async def delete_word_document(
     """
     Xóa tài liệu Word theo ID.
     """
-    response = await word_service.delete(f"/documents/{document_id}?user_id={current_user['id']}")
+    headers = {"X-User-ID": str(current_user["id"])}
+    response = await word_service.delete(f"/documents/{document_id}", headers=headers)
     return response
 
 
@@ -197,16 +204,17 @@ async def create_batch_word_documents(
     if not data_file.filename.endswith(('.csv', '.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .csv, .xlsx hoặc .xls")
 
+    headers = {"X-User-ID": str(current_user["id"])}
+    data_payload = {
+        "template_id": template_id,
+        "output_format": output_format,
+    }
     response = await word_service.upload_file(
         "/documents/templates/batch",
         file=data_file,
-        data={
-            "template_id": template_id,
-            "output_format": output_format,
-            "user_id": str(current_user["id"])
-        }
+        data=data_payload,
+        headers=headers
     )
-
     return response
 
 
@@ -229,9 +237,8 @@ async def create_internship_report(
     """
     Tạo báo cáo kết quả thực tập từ mẫu.
     """
-    response = await word_service.post(
-        "/documents/templates/internship-report",
-        json={
+    headers = {"X-User-ID": str(current_user["id"])}
+    json_payload = {
             "department": department,
             "location": location,
             "day": day,
@@ -244,10 +251,12 @@ async def create_internship_report(
             "capacity_evaluation": capacity_evaluation,
             "compliance_evaluation": compliance_evaluation,
             "group_activities": group_activities,
-            "user_id": current_user["id"]
         }
+    response = await word_service.post(
+        "/documents/templates/internship-report",
+        json_data=json_payload,
+        headers=headers
     )
-
     return response
 
 
@@ -266,9 +275,8 @@ async def create_reward_report(
     """
     Tạo báo cáo thưởng từ mẫu.
     """
-    response = await word_service.post(
-        "/documents/templates/reward-report",
-        json={
+    headers = {"X-User-ID": str(current_user["id"])}
+    json_payload = {
             "location": location,
             "day": day,
             "month": month,
@@ -277,10 +285,12 @@ async def create_reward_report(
             "recipient": recipient,
             "approver_name": approver_name,
             "submitter_name": submitter_name,
-            "user_id": current_user["id"]
         }
+    response = await word_service.post(
+        "/documents/templates/reward-report",
+        json_data=json_payload,
+        headers=headers
     )
-
     return response
 
 
@@ -312,9 +322,8 @@ async def create_labor_contract(
     """
     Tạo hợp đồng lao động từ mẫu.
     """
-    response = await word_service.post(
-        "/documents/templates/labor-contract",
-        json={
+    headers = {"X-User-ID": str(current_user["id"])}
+    json_payload = {
             "contract_number": contract_number,
             "day": day,
             "month": month,
@@ -336,10 +345,12 @@ async def create_labor_contract(
             "end_date": end_date,
             "salary": salary,
             "allowance": allowance,
-            "user_id": current_user["id"]
         }
+    response = await word_service.post(
+        "/documents/templates/labor-contract",
+        json_data=json_payload,
+        headers=headers
     )
-
     return response
 
 
@@ -350,18 +361,22 @@ async def create_invitations(
         current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Tạo lời mời từ danh sách nhân viên trong file Excel.
+    Tạo nhiều lời mời từ danh sách nhân viên trong file Excel.
+
+    - **data_file**: File Excel chứa danh sách nhân viên
+    - **output_format**: Định dạng đầu ra (docx, pdf, zip)
     """
     if not data_file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file Excel (.xlsx, .xls)")
 
+    headers = {"X-User-ID": str(current_user["id"])}
+    data_payload = {
+        "output_format": output_format,
+    }
     response = await word_service.upload_file(
         "/documents/templates/invitation",
         file=data_file,
-        data={
-            "output_format": output_format,
-            "user_id": str(current_user["id"])
-        }
+        data=data_payload,
+        headers=headers
     )
-
     return response

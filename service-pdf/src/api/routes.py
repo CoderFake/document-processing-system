@@ -1,14 +1,19 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query, Path
-from fastapi.responses import JSONResponse, FileResponse
-from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, UploadFile, File, Form, Body, HTTPException, BackgroundTasks, Depends, Query, Path, Request
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from typing import List, Optional, Dict, Any, Union
 import os
 import tempfile
 import json
+import logging
+import shutil
 
 from application.dto import (
-    CreatePdfDocumentDTO, CreatePngDocumentDTO, CreateStampDTO,
-    EncryptPdfDTO, DecryptPdfDTO, WatermarkPdfDTO, SignPdfDTO, MergePdfDTO,
-    CrackPdfDTO, ConvertPdfToWordDTO, ConvertPdfToImageDTO
+    CreateDocumentDTO as CreatePdfDocumentDTO, CreatePngDocumentDTO, CreateStampDTO,
+    EncryptPdfDTO, DecryptPdfDTO, AddWatermarkDTO as WatermarkPdfDTO, SignPdfDTO, MergePdfDTO,
+    CrackPdfDTO, ConvertPdfToWordDTO, ConvertPdfToImageDTO,
+    UpdateDocumentDTO as UpdatePdfDocumentDTO, UpdatePngDocumentDTO,
+    PdfDocumentResponseDTO, PngDocumentResponseDTO, StampResponseDTO,
+    PaginatedResponseDTO
 )
 from infrastructure.repository import (
     PDFDocumentRepository, PNGDocumentRepository, StampRepository,
@@ -17,596 +22,445 @@ from infrastructure.repository import (
 from infrastructure.minio_client import MinioClient
 from infrastructure.rabbitmq_client import RabbitMQClient
 from application.services import PDFDocumentService
+from domain.models import PDFDocumentInfo, PNGDocumentInfo, PDFProcessingInfo, MergeInfo
 from domain.exceptions import (
     DocumentNotFoundException, StorageException, ConversionException,
     EncryptionException, DecryptionException, WatermarkException,
     SignatureException, MergeException, StampNotFoundException,
-    PDFPasswordProtectedException, WrongPasswordException, CrackPasswordException
+    PDFPasswordProtectedException, WrongPasswordException, CrackPasswordException,
+    ImageNotFoundException
 )
+from api.dependencies import get_current_user_id_from_header
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_pdf_service():
+def get_pdf_service(request: Request) -> PDFDocumentService:
+    db_session_factory = request.app.state.db_pool
     minio_client = MinioClient()
     rabbitmq_client = RabbitMQClient()
-    document_repo = PDFDocumentRepository(minio_client)
-    image_repo = PNGDocumentRepository(minio_client)
+    
+    document_repo = PDFDocumentRepository(minio_client, db_session_factory)
+    image_repo = PNGDocumentRepository(minio_client, db_session_factory)
     stamp_repo = StampRepository(minio_client)
-    return PDFDocumentService(document_repo, image_repo, stamp_repo, minio_client, rabbitmq_client)
+    processing_repo = PDFProcessingRepository()
+    
+    return PDFDocumentService(
+        document_repository=document_repo, 
+        image_repository=image_repo, 
+        stamp_repository=stamp_repo, 
+        minio_client=minio_client, 
+        rabbitmq_client=rabbitmq_client, 
+        processing_repository=processing_repo
+    )
 
 
-@router.get("/documents", summary="Lấy danh sách tài liệu PDF")
-async def get_pdf_documents(
-    skip: int = 0,
-    limit: int = 10,
-    search: Optional[str] = None,
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Lấy danh sách tài liệu PDF từ hệ thống.
-    """
-    try:
-        documents = await pdf_service.get_documents(skip, limit, search)
-        return {"items": documents, "total": len(documents)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/documents/upload", summary="Tải lên tài liệu PDF mới")
+@router.post(
+    "/documents", 
+    summary="Tải lên tài liệu PDF mới", 
+    response_model=PdfDocumentResponseDTO,
+    status_code=201
+)
 async def upload_pdf_document(
+    current_user_id: str = Depends(get_current_user_id_from_header),
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Tải lên tài liệu PDF mới vào hệ thống.
-    """
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .pdf và tên file không được trống.")
+    
     try:
-        if not file.filename.endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .pdf")
-
         document_dto = CreatePdfDocumentDTO(
             title=title or os.path.splitext(file.filename)[0],
             description=description or "",
-            original_filename=file.filename
+            original_filename=file.filename,
         )
-
         content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="File không được để trống.")
 
-        document_info = await pdf_service.create_document(document_dto, content)
-
-        return {
-            "id": document_info.id,
-            "title": document_info.title,
-            "description": document_info.description,
-            "created_at": document_info.created_at.isoformat(),
-            "file_size": document_info.file_size,
-            "page_count": document_info.page_count,
-            "is_encrypted": document_info.is_encrypted,
-            "original_filename": document_info.original_filename
-        }
+        document_info = await pdf_service.create_document(document_dto, content, current_user_id)
+        return document_info
+    except StorageException as e:
+        logger.error(f"Lỗi lưu trữ khi upload PDF cho user {current_user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ khi lưu tài liệu: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi không xác định khi upload PDF cho user {current_user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ không xác định: {str(e)}")
 
 
-@router.post("/stamps/upload", summary="Tải lên mẫu dấu mới")
-async def upload_stamp(
-    file: UploadFile = File(...),
-    name: str = Form(...),
-    description: Optional[str] = Form(None),
+@router.get(
+    "/documents", 
+    summary="Lấy danh sách tài liệu PDF của người dùng",
+    response_model=PaginatedResponseDTO[PdfDocumentResponseDTO]
+)
+async def get_pdf_documents(
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    search: Optional[str] = Query(None),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Tải lên mẫu dấu mới vào hệ thống.
-    """
     try:
-        if not file.filename.endswith(('.png', '.jpg', '.jpeg')):
-            raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .png, .jpg hoặc .jpeg")
-
-        stamp_dto = CreateStampDTO(
-            name=name,
-            description=description or "",
-            original_filename=file.filename
-        )
-
-        content = await file.read()
-
-        stamp_info = await pdf_service.create_stamp(stamp_dto, content)
-
-        return {
-            "id": stamp_info.id,
-            "name": stamp_info.name,
-            "description": stamp_info.description,
-            "created_at": stamp_info.created_at.isoformat(),
-            "file_size": stamp_info.file_size,
-            "width": stamp_info.width,
-            "height": stamp_info.height,
-            "original_filename": stamp_info.original_filename
-        }
+        documents, total_count = await pdf_service.get_documents(current_user_id, skip, limit, search)
+        return {"items": documents, "total_count": total_count, "skip": skip, "limit": limit}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi khi lấy danh sách PDF cho user {current_user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
 
-@router.post("/documents/encrypt", summary="Mã hóa tài liệu PDF")
-async def encrypt_pdf_document(
-    document_id: str = Form(...),
-    password: str = Form(...),
-    permissions: Optional[str] = Form(None),
+@router.get(
+    "/documents/{document_id}", 
+    summary="Lấy thông tin chi tiết tài liệu PDF",
+    response_model=PdfDocumentResponseDTO
+)
+async def get_pdf_document(
+    document_id: str = Path(..., description="ID của tài liệu PDF"),
+    current_user_id: str = Depends(get_current_user_id_from_header),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Mã hóa tài liệu PDF với mật khẩu.
-    """
     try:
-        permissions_dict = None
-        if permissions:
-            try:
-                permissions_dict = json.loads(permissions)
-            except:
-                raise HTTPException(status_code=400, detail="Định dạng permissions không hợp lệ")
-
-        encrypt_dto = EncryptPdfDTO(
-            document_id=document_id,
-            password=password,
-            permissions=permissions_dict
-        )
-
-        result = await pdf_service.encrypt_pdf(encrypt_dto)
-
-        return {
-            "status": "success",
-            "message": "Tài liệu đã được mã hóa thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"],
-            "is_encrypted": result["is_encrypted"]
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
-    except EncryptionException as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/documents/decrypt", summary="Giải mã tài liệu PDF")
-async def decrypt_pdf_document(
-    document_id: str = Form(...),
-    password: str = Form(...),
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Giải mã tài liệu PDF với mật khẩu.
-    """
-    try:
-        decrypt_dto = DecryptPdfDTO(
-            document_id=document_id,
-            password=password
-        )
-
-        result = await pdf_service.decrypt_pdf(decrypt_dto)
-
-        return {
-            "status": "success",
-            "message": "Tài liệu đã được giải mã thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"],
-            "is_encrypted": result["is_encrypted"]
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
-    except WrongPasswordException:
-        raise HTTPException(status_code=400, detail="Mật khẩu không đúng")
-    except DecryptionException as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/documents/watermark", summary="Thêm watermark vào tài liệu PDF")
-async def add_watermark_to_pdf(
-    document_id: str = Form(...),
-    watermark_text: str = Form(...),
-    position: str = Form("center"),
-    opacity: float = Form(0.5),
-    color: Optional[str] = Form(None),
-    font_size: Optional[int] = Form(None),
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Thêm watermark vào tài liệu PDF.
-    """
-    try:
-        watermark_dto = WatermarkPdfDTO(
-            document_id=document_id,
-            watermark_text=watermark_text,
-            position=position,
-            opacity=opacity,
-            color=color,
-            font_size=font_size
-        )
-
-        result = await pdf_service.add_watermark(watermark_dto)
-
-        return {
-            "status": "success",
-            "message": "Watermark đã được thêm thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"]
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
-    except WatermarkException as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/documents/sign", summary="Thêm chữ ký vào tài liệu PDF")
-async def add_signature_to_pdf(
-    document_id: str = Form(...),
-    stamp_id: Optional[str] = Form(None),
-    signature_position: str = Form("bottom-right"),
-    page_number: int = Form(-1),
-    scale: float = Form(0.5),
-    custom_x: Optional[int] = Form(None),
-    custom_y: Optional[int] = Form(None),
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Thêm chữ ký vào tài liệu PDF.
-    """
-    try:
-        sign_dto = SignPdfDTO(
-            document_id=document_id,
-            stamp_id=stamp_id,
-            signature_position=signature_position,
-            page_number=page_number,
-            scale=scale,
-            custom_x=custom_x,
-            custom_y=custom_y
-        )
-
-        result = await pdf_service.add_signature(sign_dto)
-
-        return {
-            "status": "success",
-            "message": "Chữ ký đã được thêm thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"]
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
-    except StampNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy mẫu dấu với ID: {stamp_id}")
-    except SignatureException as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/documents/merge", summary="Gộp nhiều tài liệu PDF")
-async def merge_pdf_documents(
-    document_ids: List[str] = Form(...),
-    output_filename: str = Form(...),
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Gộp nhiều tài liệu PDF thành một.
-    """
-    try:
-        if not output_filename.endswith('.pdf'):
-            output_filename += '.pdf'
-
-        merge_dto = MergePdfDTO(
-            document_ids=document_ids,
-            output_filename=output_filename
-        )
-
-        result = await pdf_service.merge_pdfs(merge_dto)
-
-        return {
-            "status": "success",
-            "message": "Các tài liệu đã được gộp thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"],
-            "page_count": result["page_count"]
-        }
+        document_info, _ = await pdf_service.get_document(document_id, current_user_id)
+        return document_info
     except DocumentNotFoundException as e:
+        logger.warning(f"PDF document not found (id: {document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except StorageException as e:
+        logger.error(f"Lỗi storage khi lấy PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ khi lấy tài liệu: {str(e)}")
+    except Exception as e:
+        logger.error(f"Lỗi không xác định khi lấy PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ không xác định: {str(e)}")
+
+
+@router.put(
+    "/documents/{document_id}",
+    summary="Cập nhật thông tin tài liệu PDF",
+    response_model=PdfDocumentResponseDTO
+)
+async def update_pdf_document(
+    document_id: str = Path(..., description="ID của tài liệu PDF"),
+    update_dto: UpdatePdfDocumentDTO = Body(...),
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    try:
+        updated_document = await pdf_service.update_document(document_id, update_dto, current_user_id)
+        return updated_document
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF document not found for update (id: {document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except StorageException as e:
+        logger.error(f"Lỗi storage khi cập nhật PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ khi cập nhật tài liệu: {str(e)}")
+    except Exception as e:
+        logger.error(f"Lỗi không xác định khi cập nhật PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ không xác định: {str(e)}")
+
+
+@router.delete(
+    "/documents/{document_id}", 
+    summary="Xóa tài liệu PDF",
+    status_code=204
+)
+async def delete_pdf_document(
+    document_id: str = Path(..., description="ID của tài liệu PDF"),
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    try:
+        await pdf_service.delete_document(document_id, current_user_id)
+        return None
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF document not found for deletion (id: {document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except StorageException as e:
+        logger.error(f"Lỗi storage khi xóa PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ khi xóa tài liệu: {str(e)}")
+    except Exception as e:
+        logger.error(f"Lỗi không xác định khi xóa PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ không xác định: {str(e)}")
+
+
+@router.get(
+    "/documents/download/{document_id}", 
+    summary="Tải xuống tài liệu PDF"
+)
+async def download_pdf_document(
+    document_id: str = Path(..., description="ID của tài liệu PDF"),
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    temp_file_path = None
+    try:
+        document_info, content = await pdf_service.get_document(document_id, current_user_id)
+        
+        fd, temp_file_path = tempfile.mkstemp(suffix=f"_{document_info.original_filename}")
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(content)
+            
+        return FileResponse(
+            path=temp_file_path,
+            filename=document_info.original_filename,
+            media_type='application/pdf'
+        )
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF document not found for download (id: {document_id}, user: {current_user_id}): {e}")
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Lỗi khi tải PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
+
+
+@router.post("/documents/encrypt", summary="Mã hóa tài liệu PDF", response_model=Dict[str, Any])
+async def encrypt_pdf_document(
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: EncryptPdfDTO = Body(...),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    try:
+        result = await pdf_service.encrypt_pdf(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF not found for encryption (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except (EncryptionException, PDFPasswordProtectedException) as e:
+        logger.warning(f"Encryption failed (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Lỗi khi mã hóa PDF (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
+
+
+@router.post("/documents/decrypt", summary="Giải mã tài liệu PDF", response_model=Dict[str, Any])
+async def decrypt_pdf_document(
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: DecryptPdfDTO = Body(...),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    try:
+        result = await pdf_service.decrypt_pdf(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF not found for decryption (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except (DecryptionException, WrongPasswordException, PDFPasswordProtectedException) as e:
+        logger.warning(f"Decryption failed (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Lỗi khi giải mã PDF (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
+
+
+@router.post("/documents/watermark", summary="Thêm watermark vào tài liệu PDF", response_model=Dict[str, Any])
+async def add_watermark_to_pdf(
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: WatermarkPdfDTO = Body(...),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    try:
+        result = await pdf_service.add_watermark(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF not found for watermarking (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except WatermarkException as e:
+        logger.warning(f"Watermark failed (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Lỗi khi thêm watermark (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
+
+
+@router.post("/documents/sign", summary="Thêm chữ ký vào tài liệu PDF", response_model=Dict[str, Any])
+async def add_signature_to_pdf(
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: SignPdfDTO = Body(...),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    try:
+        result = await pdf_service.add_signature(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF not found for signing (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except StampNotFoundException as e:
+        logger.warning(f"Stamp not found for signing (stamp: {dto.stamp_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except SignatureException as e:
+        logger.warning(f"Sign failed (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Lỗi khi ký PDF (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
+
+
+@router.post("/documents/merge", summary="Gộp nhiều tài liệu PDF", response_model=Dict[str, Any])
+async def merge_pdf_documents(
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: MergePdfDTO = Body(...),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service)
+):
+    try:
+        result = await pdf_service.merge_pdfs(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"One or more PDFs not found for merging (user: {current_user_id}): {e}")
         raise HTTPException(status_code=404, detail=str(e))
     except MergeException as e:
+        logger.warning(f"Merge failed (user: {current_user_id}): {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi khi gộp PDF (user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
 
-@router.post("/documents/crack", summary="Crack mật khẩu tài liệu PDF")
+@router.post("/documents/crack", summary="Crack mật khẩu tài liệu PDF (gửi yêu cầu)", response_model=Dict[str, Any])
 async def crack_pdf_password(
-    document_id: str = Form(...),
-    max_length: int = Form(6),
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: CrackPdfDTO = Body(...),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Thử crack mật khẩu tài liệu PDF sử dụng phương pháp brute-force.
-    """
     try:
-        crack_dto = CrackPdfDTO(
-            document_id=document_id,
-            max_length=max_length
-        )
-
-        result = await pdf_service.crack_pdf_password(crack_dto)
-
-        return {
-            "status": "success",
-            "message": "Đã crack mật khẩu thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"],
-            "found_password": result["found_password"]
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
+        result = await pdf_service.crack_pdf_password(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF not found for password cracking (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except CrackPasswordException as e:
+        logger.warning(f"Cannot crack password (doc: {dto.document_id}, user: {current_user_id}): {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi khi gửi yêu cầu crack PDF (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
 
-@router.post("/documents/convert/to-word", summary="Chuyển đổi PDF sang Word")
+@router.post("/documents/convert/to-word", summary="Chuyển đổi PDF sang Word", response_model=Dict[str, Any])
 async def convert_pdf_to_word(
-    document_id: str = Form(...),
-    output_format: str = Form("docx"),
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: ConvertPdfToWordDTO = Body(...),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Chuyển đổi tài liệu PDF sang định dạng Word.
-    """
     try:
-        if output_format.lower() not in ["docx", "doc"]:
-            raise HTTPException(status_code=400, detail="Định dạng đầu ra không hợp lệ. Chỉ hỗ trợ 'docx' hoặc 'doc'")
-
-        convert_dto = ConvertPdfToWordDTO(
-            document_id=document_id,
-            output_format=output_format
-        )
-
-        result = await pdf_service.convert_to_word(convert_dto)
-
-        return {
-            "status": "success",
-            "message": "Tài liệu đã được chuyển đổi thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"]
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
+        result = await pdf_service.convert_to_word(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF not found for Word conversion (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except ConversionException as e:
+        logger.warning(f"PDF to Word conversion failed (doc: {dto.document_id}, user: {current_user_id}): {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi khi chuyển PDF sang Word (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
 
-@router.post("/documents/convert/to-images", summary="Chuyển đổi PDF sang hình ảnh")
+@router.post("/documents/convert/to-images", summary="Chuyển đổi PDF sang hình ảnh", response_model=Dict[str, Any])
 async def convert_pdf_to_images(
-    document_id: str = Form(...),
-    output_format: str = Form("png"),
-    dpi: int = Form(300),
-    page_numbers: Optional[str] = Form(None),
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    dto: ConvertPdfToImageDTO = Body(...),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Chuyển đổi tài liệu PDF sang hình ảnh.
-    """
     try:
-        if output_format.lower() not in ["png", "jpg"]:
-            raise HTTPException(status_code=400, detail="Định dạng đầu ra không hợp lệ. Chỉ hỗ trợ 'png' hoặc 'jpg'")
-
-        page_numbers_list = None
-        if page_numbers:
-            try:
-                page_numbers_list = [int(p.strip()) for p in page_numbers.split(",")]
-            except:
-                raise HTTPException(status_code=400, detail="Định dạng page_numbers không hợp lệ. Sử dụng định dạng: 1,2,3")
-
-        convert_dto = ConvertPdfToImageDTO(
-            document_id=document_id,
-            output_format=output_format,
-            dpi=dpi,
-            page_numbers=page_numbers_list
-        )
-
-        result = await pdf_service.convert_to_images(convert_dto)
-
-        return {
-            "status": "success",
-            "message": "Tài liệu đã được chuyển đổi thành công",
-            "document_id": result["id"],
-            "filename": result["filename"],
-            "file_size": result["file_size"],
-            "page_count": result["page_count"]
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
+        result = await pdf_service.convert_to_images(dto, current_user_id)
+        return result
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF not found for image conversion (doc: {dto.document_id}, user: {current_user_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except ConversionException as e:
+        logger.warning(f"PDF to image conversion failed (doc: {dto.document_id}, user: {current_user_id}): {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi khi chuyển PDF sang ảnh (doc: {dto.document_id}, user: {current_user_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
 
-@router.get("/documents/{document_id}", summary="Lấy thông tin tài liệu PDF")
-async def get_pdf_document(
-    document_id: str,
+@router.get("/status/processing/{processing_id}", summary="Kiểm tra trạng thái xử lý PDF", response_model=PDFProcessingInfo)
+async def get_pdf_processing_status(
+    processing_id: str = Path(..., description="ID của quá trình xử lý"),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Lấy thông tin tài liệu PDF theo ID.
-    """
     try:
-        document_info, _ = await pdf_service.get_document(document_id)
-        return {
-            "id": document_info.id,
-            "title": document_info.title,
-            "description": document_info.description,
-            "created_at": document_info.created_at.isoformat(),
-            "updated_at": document_info.updated_at.isoformat() if document_info.updated_at else None,
-            "file_size": document_info.file_size,
-            "page_count": document_info.page_count,
-            "is_encrypted": document_info.is_encrypted,
-            "original_filename": document_info.original_filename,
-            "metadata": document_info.metadata
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
+        status_info = await pdf_service.get_processing_status(processing_id)
+        return status_info
+    except DocumentNotFoundException as e:
+        logger.warning(f"Processing info not found (id: {processing_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi khi lấy trạng thái xử lý (id: {processing_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
 
-@router.get("/documents/download/{document_id}", summary="Tải xuống tài liệu PDF")
-async def download_pdf_document(
-    document_id: str,
+@router.get("/status/merge/{merge_id}", summary="Kiểm tra trạng thái gộp tài liệu", response_model=MergeInfo)
+async def get_pdf_merge_status(
+    merge_id: str = Path(..., description="ID của quá trình gộp"),
     pdf_service: PDFDocumentService = Depends(get_pdf_service)
 ):
-    """
-    Tải xuống tài liệu PDF theo ID.
-    """
     try:
-        document_info, document_content = await pdf_service.get_document(document_id)
+        status_info = await pdf_service.get_merge_status(merge_id)
+        return status_info
+    except DocumentNotFoundException as e:
+        logger.warning(f"Merge info not found (id: {merge_id}): {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Lỗi khi lấy trạng thái gộp (id: {merge_id}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ: {str(e)}")
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            temp_file.write(document_content)
-            temp_path = temp_file.name
 
-        return FileResponse(
-            path=temp_path,
-            filename=document_info.original_filename,
-            media_type="application/pdf",
-            background=BackgroundTasks().add_task(lambda: os.unlink(temp_path))
+async def safe_remove_temp_file(file_path: Optional[str]):
+    if file_path and os.path.exists(file_path):
+        try:
+            os.unlink(file_path)
+            logger.info(f"Successfully removed temp file: {file_path}")
+        except Exception as e:
+            logger.error(f"Error removing temp file {file_path}: {e}", exc_info=True)
+
+
+@router.get(
+    "/documents/download-stream/{document_id}", 
+    summary="Tải xuống tài liệu PDF (Streaming)",
+    response_class=StreamingResponse 
+)
+async def download_pdf_document_stream(
+    document_id: str = Path(..., description="ID của tài liệu PDF"),
+    current_user_id: str = Depends(get_current_user_id_from_header),
+    pdf_service: PDFDocumentService = Depends(get_pdf_service),
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    temp_file_path = None
+    try:
+        document_info, content = await pdf_service.get_document(document_id, current_user_id)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{document_info.original_filename}") as tmp_file:
+            tmp_file.write(content)
+            temp_file_path = tmp_file.name
+
+        async def file_iterator(file_path: str):
+            with open(file_path, "rb") as f:
+                while chunk := f.read(8192):
+                    yield chunk
+        
+        background_tasks.add_task(safe_remove_temp_file, temp_file_path)
+
+        return StreamingResponse(
+            file_iterator(temp_file_path),
+            media_type='application/pdf',
+            headers={"Content-Disposition": f"attachment; filename=\"{document_info.original_filename}\""}
         )
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
+    except DocumentNotFoundException as e:
+        logger.warning(f"PDF document not found for streaming download (id: {document_id}, user: {current_user_id}): {e}")
+        if temp_file_path: await safe_remove_temp_file(temp_file_path)
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/documents/{document_id}", summary="Xóa tài liệu PDF")
-async def delete_pdf_document(
-    document_id: str,
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Xóa tài liệu PDF theo ID.
-    """
-    try:
-        await pdf_service.delete_document(document_id)
-        return {
-            "status": "success",
-            "message": "Tài liệu đã được xóa thành công",
-            "document_id": document_id
-        }
-    except DocumentNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu với ID: {document_id}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/stamps", summary="Lấy danh sách mẫu dấu")
-async def get_stamps(
-    skip: int = 0,
-    limit: int = 10,
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Lấy danh sách mẫu dấu từ hệ thống.
-    """
-    try:
-        stamps = await pdf_service.get_stamps(skip, limit)
-        return {"items": stamps, "total": len(stamps)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/stamps/{stamp_id}", summary="Lấy thông tin mẫu dấu")
-async def get_stamp(
-    stamp_id: str,
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Lấy thông tin mẫu dấu theo ID.
-    """
-    try:
-        stamp_info, _ = await pdf_service.get_stamp(stamp_id)
-        return {
-            "id": stamp_info.id,
-            "name": stamp_info.name,
-            "description": stamp_info.description,
-            "created_at": stamp_info.created_at.isoformat(),
-            "updated_at": stamp_info.updated_at.isoformat() if stamp_info.updated_at else None,
-            "file_size": stamp_info.file_size,
-            "width": stamp_info.width,
-            "height": stamp_info.height,
-            "original_filename": stamp_info.original_filename,
-            "metadata": stamp_info.metadata
-        }
-    except StampNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy mẫu dấu với ID: {stamp_id}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/stamps/{stamp_id}", summary="Xóa mẫu dấu")
-async def delete_stamp(
-    stamp_id: str,
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Xóa mẫu dấu theo ID.
-    """
-    try:
-        await pdf_service.delete_stamp(stamp_id)
-        return {
-            "status": "success",
-            "message": "Mẫu dấu đã được xóa thành công",
-            "stamp_id": stamp_id
-        }
-    except StampNotFoundException:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy mẫu dấu với ID: {stamp_id}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/status/processing/{processing_id}", summary="Kiểm tra trạng thái xử lý PDF")
-async def get_processing_status(
-    processing_id: str,
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Kiểm tra trạng thái xử lý PDF.
-    """
-    try:
-        status = await pdf_service.get_processing_status(processing_id)
-        return status
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/status/merge/{merge_id}", summary="Kiểm tra trạng thái gộp tài liệu")
-async def get_merge_status(
-    merge_id: str,
-    pdf_service: PDFDocumentService = Depends(get_pdf_service)
-):
-    """
-    Kiểm tra trạng thái gộp tài liệu.
-    """
-    try:
-        status = await pdf_service.get_merge_status(merge_id)
-        return status
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Lỗi khi stream PDF (id: {document_id}, user: {current_user_id}): {e}", exc_info=True)
+        if temp_file_path: await safe_remove_temp_file(temp_file_path)
+        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ khi stream tài liệu: {str(e)}")

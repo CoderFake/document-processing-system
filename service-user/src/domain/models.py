@@ -1,7 +1,9 @@
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Dict, Any
+import uuid
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -10,15 +12,15 @@ Base = declarative_base()
 user_roles = Table(
     'user_roles',
     Base.metadata,
-    Column('user_id', Integer, ForeignKey('users.id')),
-    Column('role_id', Integer, ForeignKey('roles.id'))
+    Column('user_id', UUID, ForeignKey('users.id')),
+    Column('role_id', UUID, ForeignKey('roles.id'))
 )
 
 role_permissions = Table(
     'role_permissions',
     Base.metadata,
-    Column('role_id', Integer, ForeignKey('roles.id')),
-    Column('permission_id', Integer, ForeignKey('permissions.id'))
+    Column('role_id', UUID, ForeignKey('roles.id')),
+    Column('permission_id', UUID, ForeignKey('permissions.id'))
 )
 
 
@@ -26,7 +28,7 @@ class User(Base):
     """Người dùng trong hệ thống."""
     __tablename__ = 'users'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
     username = Column(String(50), unique=True, index=True, nullable=False)
     email = Column(String(100), unique=True, index=True, nullable=False)
     hashed_password = Column(String(100), nullable=False)
@@ -40,15 +42,53 @@ class User(Base):
     user_metadata = Column(Text, nullable=True)
 
     roles = relationship("Role", secondary=user_roles, back_populates="users")
-
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="user")
+
+
+class DocumentCategory(Base):
+    """Danh mục tài liệu trong hệ thống."""
+    __tablename__ = 'document_categories'
+
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    documents = relationship("Document", back_populates="category")
+
+
+class Document(Base):
+    """Tài liệu trong hệ thống."""
+    __tablename__ = 'documents'
+
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    file_path = Column(String(255), nullable=False)
+    file_size = Column(Integer, nullable=False, default=0)
+    file_type = Column(String(50), nullable=False)
+    original_filename = Column(String(255), nullable=False)
+    storage_id = Column(UUID, nullable=False, default=uuid.uuid4)
+    service_name = Column(String(50), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_deleted = Column(Boolean, default=False)
+    doc_metadata = Column(Text, nullable=True)
+    
+    user_id = Column(UUID, ForeignKey('users.id'), nullable=False)
+    category_id = Column(UUID, ForeignKey('document_categories.id'), nullable=True)
+    
+    user = relationship("User", back_populates="documents")
+    category = relationship("DocumentCategory", back_populates="documents")
 
 
 class Role(Base):
     """Vai trò người dùng trong hệ thống."""
     __tablename__ = 'roles'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
     name = Column(String(50), unique=True, index=True, nullable=False)
     description = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -62,7 +102,7 @@ class Permission(Base):
     """Quyền trong hệ thống."""
     __tablename__ = 'permissions'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
     name = Column(String(100), unique=True, index=True, nullable=False)
     description = Column(String(255))
     resource = Column(String(50), nullable=False) 
@@ -76,9 +116,9 @@ class RefreshToken(Base):
     """Refresh token cho JWT."""
     __tablename__ = 'refresh_tokens'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
     token = Column(String(255), unique=True, index=True, nullable=False)
-    user_id = Column(Integer, ForeignKey('users.id'))
+    user_id = Column(UUID, ForeignKey('users.id'))
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     revoked = Column(Boolean, default=False)
@@ -89,7 +129,7 @@ class RefreshToken(Base):
 
 class UserProfile:
     """Thông tin hồ sơ người dùng."""
-    id: int
+    id: str
     username: str
     email: str
     full_name: Optional[str]
@@ -103,7 +143,7 @@ class UserProfile:
 
     def __init__(
         self,
-        id: int,
+        id: str,
         username: str,
         email: str,
         full_name: Optional[str] = None,
@@ -130,7 +170,7 @@ class UserProfile:
 
 class TokenData:
     """Dữ liệu từ token JWT."""
-    user_id: int
+    user_id: str
     username: str
     roles: List[str]
     permissions: List[Dict[str, str]]
@@ -138,7 +178,7 @@ class TokenData:
 
     def __init__(
         self,
-        user_id: int,
+        user_id: str,
         username: str,
         roles: List[str],
         permissions: List[Dict[str, str]],

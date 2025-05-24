@@ -8,7 +8,34 @@ class CreateDocumentDTO(BaseModel):
     title: str
     description: str = ""
     original_filename: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    doc_metadata: Dict[str, Any] = Field(default_factory=dict)
+    user_id: Optional[str] = None
+
+    def __init__(
+        self,
+        title: str,
+        description: str,
+        original_filename: str,
+        doc_metadata: Dict[str, Any] = None,
+        user_id: Optional[str] = None
+    ):
+        """
+        Khởi tạo DTO cho việc tạo tài liệu Word mới.
+
+        Args:
+            title: Tiêu đề của tài liệu
+            description: Mô tả của tài liệu
+            original_filename: Tên file gốc
+            doc_metadata: Metadata của tài liệu
+            user_id: ID của người dùng tạo tài liệu
+        """
+        super().__init__(
+            title=title,
+            description=description,
+            original_filename=original_filename,
+            doc_metadata=doc_metadata or {},
+            user_id=user_id
+        )
 
 class UpdateDocumentDTO(BaseModel):
     """
@@ -16,7 +43,7 @@ class UpdateDocumentDTO(BaseModel):
     """
     title: Optional[str] = None
     description: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    doc_metadata: Optional[Dict[str, Any]] = None
 
 class CreateTemplateDTO(BaseModel):
     """
@@ -26,7 +53,7 @@ class CreateTemplateDTO(BaseModel):
     description: str = ""
     category: str = "general"
     fields: List[Dict[str, Any]] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    doc_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class TemplateDataDTO(BaseModel):
     """
@@ -35,6 +62,7 @@ class TemplateDataDTO(BaseModel):
     template_id: str
     data: Dict[str, Any]
     output_format: str = "docx"  # docx, pdf
+    user_id: str
 
 class WatermarkDTO(BaseModel):
     """
@@ -77,3 +105,59 @@ class DocumentFilterDTO(BaseModel):
     to_date: Optional[str] = None
     sort_by: Optional[str] = "created_at"
     sort_order: Optional[str] = "desc"
+
+class InternshipReportModel(BaseModel):
+    """
+    DTO cho báo cáo kết quả thực tập.
+    """
+    department: str
+    location: str
+    day: str
+    month: str
+    year: str
+    intern_name: str
+    internship_duration: str
+    supervisor_name: str
+    ethics_evaluation: str
+    capacity_evaluation: str
+    compliance_evaluation: str
+    group_activities: str
+
+class RewardReportModel(BaseModel):
+    """
+    DTO cho báo cáo thưởng.
+    """
+    location: str
+    day: str
+    month: str
+    year: str
+    title: str
+    recipient: str
+    approver_name: str
+    submitter_name: str
+
+class LaborContractModel(BaseModel):
+    """
+    DTO cho hợp đồng lao động.
+    """
+    contract_number: str
+    day: str
+    month: str
+    year: str
+    representative_name: str
+    position: str
+    employee_name: str
+    nationality: str
+    date_of_birth: str
+    gender: str
+    profession: str
+    permanent_address: str
+    current_address: str
+    id_number: str
+    id_issue_date: str
+    id_issue_place: str
+    job_position: str
+    start_date: str
+    end_date: str
+    salary: str
+    allowance: str

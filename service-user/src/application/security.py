@@ -126,7 +126,7 @@ def decode_token(token: str) -> TokenData:
     """
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        user_id: int = int(payload.get("sub"))
+        user_id: str = payload.get("sub")
         username: str = payload.get("username")
         roles: List[str] = payload.get("roles", [])
         permissions: List[Dict[str, str]] = payload.get("permissions", [])
@@ -165,4 +165,20 @@ def has_permission(token_data: TokenData, resource: str, action: str) -> bool:
            (permission["action"] == action or permission["action"] == "*"):
             return True
     
-    return False 
+    return False
+
+
+def verify_token(token: str) -> Optional[TokenData]:
+    """
+    Xác minh và giải mã JWT token.
+    
+    Args:
+        token: JWT token cần xác minh
+    
+    Returns:
+        TokenData nếu token hợp lệ, ngược lại None
+    """
+    try:
+        return decode_token(token)
+    except (InvalidTokenException, TokenExpiredException):
+        return None 

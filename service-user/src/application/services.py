@@ -1,11 +1,12 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
+import json
 
-from domain.models import User, Role, Permission, RefreshToken
-from infrastructure.repository import UserRepository, RoleRepository, RefreshTokenRepository
+from domain.models import TokenData, User, Role, Permission, RefreshToken, UserProfile, Document, DocumentCategory
+from infrastructure.repository import UserRepository, RoleRepository, RefreshTokenRepository, DocumentRepository, DocumentCategoryRepository
 from application.dto import UserCreateDTO, UserUpdateDTO, RoleCreateDTO, RoleUpdateDTO
-from application.security import verify_password, get_password_hash
+from application.security import verify_password, get_password_hash, create_access_token, create_refresh_token
 from domain.exceptions import UserNotFoundException, RoleNotFoundException
 
 logger = logging.getLogger(__name__)
@@ -14,10 +15,11 @@ logger = logging.getLogger(__name__)
 class UserService:
     """Service cho các hoạt động liên quan đến User."""
     
-    def __init__(self, repository: UserRepository):
+    def __init__(self, repository: UserRepository, token_repository: RefreshTokenRepository):
         self.repository = repository
+        self.token_repository = token_repository
     
-    async def get_user(self, user_id: int) -> Optional[User]:
+    async def get_user(self, user_id: str) -> Optional[User]:
         """Lấy thông tin user theo ID."""
         user = await self.repository.get_user_by_id(user_id)
         if not user:
@@ -37,30 +39,36 @@ class UserService:
         """Lấy danh sách users."""
         return await self.repository.get_users(skip, limit)
     
-    async def create_user(self, user_data: UserCreateDTO) -> User:
+    async def create_user(self, user_data: UserCreateDTO) -> Optional[User]:
         """Tạo user mới."""
         existing_user = await self.repository.get_user_by_username(user_data.username)
         if existing_user:
-            raise ValueError(f"Username '{user_data.username}' already exists")
-        
-        existing_user = await self.repository.get_user_by_email(user_data.email)
-        if existing_user:
-            raise ValueError(f"Email '{user_data.email}' already exists")
-        
-        hashed_password = get_password_hash(user_data.password)
-        
-        user = User(
-            username=user_data.username,
-            email=user_data.email,
-            hashed_password=hashed_password,
-            full_name=user_data.full_name,
-            is_active=user_data.is_active if user_data.is_active is not None else True,
-            is_verified=user_data.is_verified if user_data.is_verified is not None else False,
-        )
-        
-        return await self.repository.create_user(user)
+            logger.warning(f"Tên đăng nhập đã tồn tại: {user_data.username}")
+            return None
+
+        existing_email = await self.repository.get_user_by_email(user_data.email)
+        if existing_email:
+            logger.warning(f"Email đã tồn tại: {user_data.email}")
+            return None
+
+        try:
+            hashed_password = get_password_hash(user_data.password)
+            
+            user = User(
+                username=user_data.username,
+                email=user_data.email,
+                hashed_password=hashed_password,
+                full_name=user_data.full_name,
+                is_active=user_data.is_active if user_data.is_active is not None else True,
+                is_verified=user_data.is_verified if user_data.is_verified is not None else False,
+            )
+            
+            return await self.repository.create_user(user)
+        except Exception as e:
+            logger.error(f"Lỗi khi tạo người dùng: {str(e)}")
+            return None
     
-    async def update_user(self, user_id: int, user_data: UserUpdateDTO) -> Optional[User]:
+    async def update_user(self, user_id: str, user_data: UserUpdateDTO) -> Optional[User]:
         """Cập nhật thông tin user."""
         user = await self.repository.get_user_by_id(user_id)
         if not user:
@@ -96,7 +104,7 @@ class UserService:
         
         return await self.repository.update_user(user_id, update_data)
     
-    async def delete_user(self, user_id: int) -> bool:
+    async def delete_user(self, user_id: str) -> bool:
         """Xóa user."""
         user = await self.repository.get_user_by_id(user_id)
         if not user:
@@ -104,7 +112,7 @@ class UserService:
 
         return await self.repository.delete_user(user_id)
     
-    async def authenticate_user(self, username: str, password: str) -> Optional[User]:
+    async def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         """Xác thực user với username và password."""
         user = await self.repository.get_user_by_username(username)
         if not user:
@@ -113,7 +121,29 @@ class UserService:
         if not verify_password(password, user.hashed_password):
             return None
         
-        return user
+        await self.repository.update_user(user.id, {"last_login": datetime.utcnow()})
+
+        access_token = create_access_token(
+            user_or_id=user
+        )
+        
+        token_str = create_refresh_token()
+        expires_at = datetime.utcnow() + timedelta(days=30)
+        
+        refresh_token_obj = RefreshToken(
+            token=token_str,
+            user_id=user.id,
+            expires_at=expires_at,
+            created_at=datetime.utcnow()
+        )
+        
+        refresh_token = await self.token_repository.create_refresh_token(refresh_token_obj)
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token.token,
+            "token_type": "bearer"
+        }
 
 
 class RoleService:
@@ -122,7 +152,7 @@ class RoleService:
     def __init__(self, repository: RoleRepository):
         self.repository = repository
     
-    async def get_role(self, role_id: int) -> Optional[Role]:
+    async def get_role(self, role_id: str) -> Optional[Role]:
         """Lấy thông tin role theo ID."""
         role = await self.repository.get_role_by_id(role_id)
         if not role:
@@ -151,7 +181,7 @@ class RoleService:
         
         return await self.repository.create_role(role)
     
-    async def update_role(self, role_id: int, role_data: RoleUpdateDTO) -> Optional[Role]:
+    async def update_role(self, role_id: str, role_data: RoleUpdateDTO) -> Optional[Role]:
         """Cập nhật thông tin role."""
         role = await self.repository.get_role_by_id(role_id)
         if not role:
@@ -175,7 +205,7 @@ class RoleService:
         
         return await self.repository.update_role(role_id, update_data)
     
-    async def delete_role(self, role_id: int) -> bool:
+    async def delete_role(self, role_id: str) -> bool:
         """Xóa role."""
         role = await self.repository.get_role_by_id(role_id)
         if not role:
@@ -197,7 +227,7 @@ class AuthService:
         self.role_repository = role_repository
         self.token_repository = token_repository
     
-    async def assign_role_to_user(self, user_id: int, role_id: int) -> bool:
+    async def assign_role_to_user(self, user_id: str, role_id: str) -> bool:
         """Gán role cho user."""
         user = await self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -210,7 +240,7 @@ class AuthService:
         await self.user_repository.assign_role_to_user(user, role)
         return True
     
-    async def remove_role_from_user(self, user_id: int, role_id: int) -> bool:
+    async def remove_role_from_user(self, user_id: str, role_id: str) -> bool:
         """Xóa role khỏi user."""
         user = await self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -223,7 +253,7 @@ class AuthService:
         await self.user_repository.remove_role_from_user(user, role)
         return True
         
-    async def create_refresh_token(self, user_id: int) -> str:
+    async def create_refresh_token(self, user_id: str) -> str:
         """Tạo refresh token mới cho user.
         
         Args:
@@ -235,11 +265,8 @@ class AuthService:
         from application.security import create_refresh_token as create_token
         from datetime import datetime, timedelta
         
-        # Tạo refresh token mới
         token_str = create_token()
-        expires_at = datetime.utcnow() + timedelta(days=30)  # Mặc định hết hạn sau 30 ngày
-        
-        # Tạo đối tượng RefreshToken
+        expires_at = datetime.utcnow() + timedelta(days=30) 
         refresh_token = RefreshToken(
             token=token_str,
             user_id=user_id,
@@ -247,7 +274,6 @@ class AuthService:
             created_at=datetime.utcnow()
         )
         
-        # Lưu vào database
         await self.token_repository.create_refresh_token(refresh_token)
         
         return token_str
@@ -264,23 +290,19 @@ class AuthService:
         Raises:
             ValueError: Nếu refresh token không hợp lệ hoặc đã hết hạn
         """
-        # Lấy refresh token từ database
         refresh_token = await self.token_repository.get_refresh_token(token_str)
         if not refresh_token:
             raise ValueError("Invalid refresh token")
             
-        # Kiểm tra xem refresh token có hết hạn chưa
         if refresh_token.expires_at < datetime.utcnow():
-            # Thu hồi refresh token nếu đã hết hạn
             await self.token_repository.revoke_refresh_token(token_str)
             raise ValueError("Refresh token expired")
-            
-        # Tạo và trả về dữ liệu token
+        
         return TokenData(
             user_id=refresh_token.user_id,
-            username="",  # Không cần thiết cho refresh token
-            roles=[],     # Không cần thiết cho refresh token
-            permissions=[],  # Không cần thiết cho refresh token
+            username="", 
+            roles=[],
+            permissions=[], 
             exp=refresh_token.expires_at
         )
         
@@ -295,7 +317,7 @@ class AuthService:
         """
         return await self.token_repository.revoke_refresh_token(token_str)
         
-    async def revoke_all_user_tokens(self, user_id: int) -> int:
+    async def revoke_all_user_tokens(self, user_id: str) -> int:
         """Thu hồi tất cả refresh token của user.
         
         Args:
@@ -304,4 +326,249 @@ class AuthService:
         Returns:
             Số lượng refresh token đã thu hồi
         """
-        return await self.token_repository.revoke_all_user_tokens(user_id) 
+        return await self.token_repository.revoke_all_user_tokens(user_id)
+
+
+class DocumentService:
+    """
+    Service xử lý nghiệp vụ liên quan đến Document.
+    """
+
+    def __init__(self, document_repository: DocumentRepository, category_repository: DocumentCategoryRepository):
+        self.document_repository = document_repository
+        self.category_repository = category_repository
+
+    async def create_document(self, user_id: str, document_data: Dict[str, Any]) -> Optional[Document]:
+        """
+        Tạo tài liệu mới.
+        """
+        try:
+            document_data["user_id"] = user_id
+            
+            if "metadata" in document_data and isinstance(document_data["metadata"], dict):
+                document_data["metadata"] = json.dumps(document_data["metadata"])
+                
+            return await self.document_repository.create(document_data)
+        except Exception as e:
+            logger.error(f"Lỗi khi tạo tài liệu mới: {str(e)}")
+            return None
+
+    async def get_document_by_id(self, document_id: str, user_id: Optional[str] = None) -> Optional[Document]:
+        """
+        Lấy thông tin tài liệu theo ID.
+        """
+        try:
+            document = await self.document_repository.get_by_id(document_id)
+          
+            if document and user_id is not None and document.user_id != user_id:
+                return None
+                
+            return document
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy thông tin tài liệu (ID: {document_id}): {str(e)}")
+            return None
+
+    async def get_document_by_storage_id(self, storage_id: str, user_id: Optional[str] = None) -> Optional[Document]:
+        """
+        Lấy thông tin tài liệu theo ID lưu trữ.
+        """
+        try:
+            document = await self.document_repository.get_by_storage_id(storage_id)
+            
+            if document and user_id is not None and document.user_id != user_id:
+                return None
+                
+            return document
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy thông tin tài liệu (Storage ID: {storage_id}): {str(e)}")
+            return None
+
+    async def get_user_documents(self, user_id: str, skip: int = 0, limit: int = 100, 
+                                file_type: Optional[str] = None,
+                                service_name: Optional[str] = None,
+                                category_id: Optional[int] = None) -> List[Document]:
+        """
+        Lấy danh sách tài liệu của người dùng.
+        """
+        try:
+            return await self.document_repository.get_by_user_id(
+                user_id, skip, limit, file_type, service_name, category_id
+            )
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy danh sách tài liệu của người dùng (ID: {user_id}): {str(e)}")
+            return []
+
+    async def get_all_documents(self, skip: int = 0, limit: int = 100, 
+                               file_type: Optional[str] = None,
+                               service_name: Optional[str] = None,
+                               category_id: Optional[int] = None) -> List[Document]:
+        """
+        Lấy tất cả tài liệu.
+        """
+        try:
+            return await self.document_repository.get_all(
+                skip, limit, file_type, service_name, category_id
+            )
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy tất cả tài liệu: {str(e)}")
+            return []
+
+    async def update_document(self, document_id: str, document_data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Document]:
+        """
+        Cập nhật thông tin tài liệu.
+        """
+        try:
+            # Kiểm tra quyền truy cập
+            document = await self.document_repository.get_by_id(document_id)
+            if not document:
+                return None
+                
+            if user_id is not None and document.user_id != user_id:
+                logger.warning(f"Người dùng không có quyền cập nhật tài liệu: User ID {user_id}, Document ID {document_id}")
+                return None
+            
+            if "metadata" in document_data and isinstance(document_data["metadata"], dict):
+                document_data["metadata"] = json.dumps(document_data["metadata"])
+                
+            return await self.document_repository.update(document_id, document_data)
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật thông tin tài liệu (ID: {document_id}): {str(e)}")
+            return None
+
+    async def delete_document(self, document_id: str, user_id: Optional[str] = None, hard_delete: bool = False) -> bool:
+        """
+        Xóa tài liệu.
+        """
+        try:
+            document = await self.document_repository.get_by_id(document_id)
+            if not document:
+                return False
+                
+            if user_id is not None and document.user_id != user_id:
+                logger.warning(f"Người dùng không có quyền xóa tài liệu: User ID {user_id}, Document ID {document_id}")
+                return False
+                
+            return await self.document_repository.delete(document_id, hard_delete)
+        except Exception as e:
+            logger.error(f"Lỗi khi xóa tài liệu (ID: {document_id}): {str(e)}")
+            return False
+
+    async def count_user_documents(self, user_id: str, 
+                                  file_type: Optional[str] = None,
+                                  service_name: Optional[str] = None,
+                                  category_id: Optional[int] = None) -> int:
+        """
+        Đếm số lượng tài liệu của người dùng.
+        """
+        try:
+            return await self.document_repository.count_by_user_id(
+                user_id, file_type, service_name, category_id
+            )
+        except Exception as e:
+            logger.error(f"Lỗi khi đếm số lượng tài liệu của người dùng (ID: {user_id}): {str(e)}")
+            return 0
+
+    async def count_all_documents(self, 
+                                 file_type: Optional[str] = None,
+                                 service_name: Optional[str] = None,
+                                 category_id: Optional[int] = None) -> int:
+        """
+        Đếm tổng số tài liệu.
+        """
+        try:
+            return await self.document_repository.count_all(
+                file_type, service_name, category_id
+            )
+        except Exception as e:
+            logger.error(f"Lỗi khi đếm tổng số tài liệu: {str(e)}")
+            return 0
+
+
+class DocumentCategoryService:
+    """
+    Service xử lý nghiệp vụ liên quan đến DocumentCategory.
+    """
+
+    def __init__(self, category_repository: DocumentCategoryRepository):
+        self.category_repository = category_repository
+
+    async def create_category(self, category_data: Dict[str, Any]) -> Optional[DocumentCategory]:
+        """
+        Tạo danh mục tài liệu mới.
+        """
+        try:
+            existing_category = await self.category_repository.get_by_name(category_data["name"])
+            if existing_category:
+                logger.warning(f"Tên danh mục đã tồn tại: {category_data['name']}")
+                return None
+                
+            return await self.category_repository.create(category_data)
+        except Exception as e:
+            logger.error(f"Lỗi khi tạo danh mục tài liệu mới: {str(e)}")
+            return None
+
+    async def get_category_by_id(self, category_id: int) -> Optional[DocumentCategory]:
+        """
+        Lấy thông tin danh mục theo ID.
+        """
+        try:
+            return await self.category_repository.get_by_id(category_id)
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy thông tin danh mục (ID: {category_id}): {str(e)}")
+            return None
+
+    async def get_category_by_name(self, name: str) -> Optional[DocumentCategory]:
+        """
+        Lấy thông tin danh mục theo tên.
+        """
+        try:
+            return await self.category_repository.get_by_name(name)
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy thông tin danh mục (Tên: {name}): {str(e)}")
+            return None
+
+    async def get_all_categories(self, skip: int = 0, limit: int = 100) -> List[DocumentCategory]:
+        """
+        Lấy tất cả danh mục.
+        """
+        try:
+            return await self.category_repository.get_all(skip, limit)
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy tất cả danh mục: {str(e)}")
+            return []
+
+    async def update_category(self, category_id: int, category_data: Dict[str, Any]) -> Optional[DocumentCategory]:
+        """
+        Cập nhật thông tin danh mục.
+        """
+        try:
+            if "name" in category_data:
+                existing_category = await self.category_repository.get_by_name(category_data["name"])
+                if existing_category and existing_category.id != category_id:
+                    logger.warning(f"Tên danh mục đã tồn tại: {category_data['name']}")
+                    return None
+                    
+            return await self.category_repository.update(category_id, category_data)
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật thông tin danh mục (ID: {category_id}): {str(e)}")
+            return None
+
+    async def delete_category(self, category_id: int) -> bool:
+        """
+        Xóa danh mục.
+        """
+        try:
+            return await self.category_repository.delete(category_id)
+        except Exception as e:
+            logger.error(f"Lỗi khi xóa danh mục (ID: {category_id}): {str(e)}")
+            return False
+
+    async def count_categories(self) -> int:
+        """
+        Đếm số lượng danh mục.
+        """
+        try:
+            return await self.category_repository.count()
+        except Exception as e:
+            logger.error(f"Lỗi khi đếm số lượng danh mục: {str(e)}")
+            return 0 

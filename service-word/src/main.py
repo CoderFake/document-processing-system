@@ -6,6 +6,7 @@ import logging
 from core.config import settings
 from api.routes import router as api_router
 from utils.grpc_server import start_grpc_server, GRPCServer
+import asyncpg
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,15 +33,28 @@ app.add_middleware(
 app.include_router(api_router)
 
 grpc_server_instance = None
+app.state.db_pool = None
 
 @app.on_event("startup")
 async def startup_event():
     """
     Hàm được gọi khi ứng dụng khởi động.
     Khởi động gRPC server trong một thread riêng.
+    Khởi tạo database connection pool.
     """
     global grpc_server_instance
+    global app
     
+    try:
+        app.state.db_pool = await asyncpg.create_pool(
+            dsn=settings.DATABASE_URL,
+            min_size=5,
+            max_size=20
+        )
+        logger.info("Database connection pool đã được tạo.")
+    except Exception as e:
+        logger.error(f"Không thể tạo database connection pool: {e}")
+
     grpc_host = f"[::]:{settings.GRPC_PORT}"
     
     logger.info(f"Khởi động gRPC server trên {grpc_host}")
@@ -53,8 +67,17 @@ async def shutdown_event():
     """
     Hàm được gọi khi ứng dụng shutdown.
     Dừng gRPC server nếu đang chạy.
+    Đóng database connection pool.
     """
     global grpc_server_instance
+    global app
+
+    if app.state.db_pool:
+        try:
+            await app.state.db_pool.close()
+            logger.info("Database connection pool đã được đóng.")
+        except Exception as e:
+            logger.error(f"Lỗi khi đóng database connection pool: {e}")
     
     if grpc_server_instance:
         logger.info("Dừng gRPC server")

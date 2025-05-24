@@ -15,11 +15,25 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: List[str] = ["*"]
 
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/document_processing")
+    DEBUG: bool = os.getenv("APP_ENV", "development") == "development"
+    # DB Pool Settings
+    DB_POOL_MIN_SIZE: int = int(os.getenv("DB_POOL_MIN_SIZE", "1"))
+    DB_POOL_MAX_SIZE: int = int(os.getenv("DB_POOL_MAX_SIZE", "10"))
+    DB_TIMEOUT: int = int(os.getenv("DB_TIMEOUT", "30")) 
+    DB_COMMAND_TIMEOUT: int = int(os.getenv("DB_COMMAND_TIMEOUT", "5"))
+
     RABBITMQ_HOST: str = os.getenv("RABBITMQ_HOST", "rabbitmq")
     RABBITMQ_PORT: int = int(os.getenv("RABBITMQ_PORT", "5672"))
     RABBITMQ_USER: str = os.getenv("RABBITMQ_USER", "admin")
     RABBITMQ_PASS: str = os.getenv("RABBITMQ_PASS", "adminpassword")
     RABBITMQ_VHOST: str = os.getenv("RABBITMQ_VHOST", "/")
+    
+    # RabbitMQ Task Settings
+    RABBITMQ_EXCHANGE_TASKS: str = os.getenv("RABBITMQ_EXCHANGE_TASKS", "tasks_exchange")
+    RABBITMQ_ROUTING_KEY_EXCEL_MERGE: str = os.getenv("RABBITMQ_ROUTING_KEY_EXCEL_MERGE", "excel.tasks.merge")
+    RABBITMQ_ROUTING_KEY_EXCEL_TO_PDF: str = os.getenv("RABBITMQ_ROUTING_KEY_EXCEL_TO_PDF", "excel.tasks.convert.pdf")
+    RABBITMQ_ROUTING_KEY_EXCEL_TO_WORD: str = os.getenv("RABBITMQ_ROUTING_KEY_EXCEL_TO_WORD", "excel.tasks.convert.word")
 
     MINIO_HOST: str = os.getenv("MINIO_HOST", "minio")
     MINIO_PORT: int = int(os.getenv("MINIO_PORT", "9000"))

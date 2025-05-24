@@ -11,3 +11,8 @@ httpx==0.25.0
 pyzipper==0.3.6
 py7zr==0.20.5
 rarfile==4.0
+sqlalchemy==2.0.20
+sqlalchemy[asyncio]
+asyncpg==0.28.0
+alembic==1.12.0
+psycopg2-binary==2.9.7

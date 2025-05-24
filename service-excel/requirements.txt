@@ -15,3 +15,11 @@ pandas==2.0.3
 XlsxWriter==3.1.9
 openpyxl==3.1.2
 xlrd==2.0.1
+matplotlib==3.7.2
+pillow==10.0.1
+python-docx==0.8.11
+sqlalchemy==2.0.20
+sqlalchemy[asyncio]
+asyncpg==0.28.0
+alembic==1.12.0
+psycopg2-binary==2.9.7

@@ -1,100 +1,151 @@
+import logging
+from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from typing import Optional
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
+import jwt
+from jwt.exceptions import PyJWTError
 
-from core.config import settings
-from domain.models import User
-from infrastructure.repository import UserRepository, RoleRepository, RefreshTokenRepository
-from application.services import UserService, AuthService
+from domain.models import User, TokenData
 from infrastructure.database import get_db_session
+from infrastructure.repository import UserRepository, RoleRepository, RefreshTokenRepository, DocumentRepository, DocumentCategoryRepository
+from application.services import UserService, AuthService, DocumentService, DocumentCategoryService
+from application.security import verify_token
+from core.config import settings
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+logger = logging.getLogger(__name__)
 
-async def get_user_repository(session: AsyncSession = Depends(get_db_session)):
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token")
+
+
+def get_user_repository(session: AsyncSession = Depends(get_db_session)) -> UserRepository:
     """
     Dependency để lấy UserRepository.
     """
     return UserRepository(session)
 
-async def get_role_repository(session: AsyncSession = Depends(get_db_session)):
+
+def get_role_repository(session: AsyncSession = Depends(get_db_session)) -> RoleRepository:
     """
     Dependency để lấy RoleRepository.
     """
     return RoleRepository(session)
 
-async def get_token_repository(session: AsyncSession = Depends(get_db_session)):
+
+def get_refresh_token_repository(session: AsyncSession = Depends(get_db_session)) -> RefreshTokenRepository:
     """
     Dependency để lấy RefreshTokenRepository.
     """
     return RefreshTokenRepository(session)
 
-async def get_user_service(
-    repository: UserRepository = Depends(get_user_repository)
-):
+
+def get_document_repository(session: AsyncSession = Depends(get_db_session)) -> DocumentRepository:
+    """
+    Dependency để lấy DocumentRepository.
+    """
+    return DocumentRepository(session)
+
+
+def get_document_category_repository(session: AsyncSession = Depends(get_db_session)) -> DocumentCategoryRepository:
+    """
+    Dependency để lấy DocumentCategoryRepository.
+    """
+    return DocumentCategoryRepository(session)
+
+
+def get_user_service(
+    user_repository: UserRepository = Depends(get_user_repository),
+    token_repository: RefreshTokenRepository = Depends(get_refresh_token_repository)
+) -> UserService:
     """
     Dependency để lấy UserService.
     """
-    return UserService(repository)
+    return UserService(user_repository, token_repository)
 
-async def get_auth_service(
-    user_repo: UserRepository = Depends(get_user_repository),
-    role_repo: RoleRepository = Depends(get_role_repository),
-    token_repo: RefreshTokenRepository = Depends(get_token_repository)
-):
+
+def get_auth_service(
+    user_repository: UserRepository = Depends(get_user_repository),
+    role_repository: RoleRepository = Depends(get_role_repository),
+    token_repository: RefreshTokenRepository = Depends(get_refresh_token_repository)
+) -> AuthService:
     """
     Dependency để lấy AuthService.
     """
-    return AuthService(user_repo, role_repo, token_repo)
+    return AuthService(user_repository, role_repository, token_repository)
+
+
+def get_document_service(
+    document_repository: DocumentRepository = Depends(get_document_repository),
+    category_repository: DocumentCategoryRepository = Depends(get_document_category_repository)
+) -> DocumentService:
+    """
+    Dependency để lấy DocumentService.
+    """
+    return DocumentService(document_repository, category_repository)
+
+
+def get_document_category_service(
+    category_repository: DocumentCategoryRepository = Depends(get_document_category_repository)
+) -> DocumentCategoryService:
+    """
+    Dependency để lấy DocumentCategoryService.
+    """
+    return DocumentCategoryService(category_repository)
+
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    user_repo: UserRepository = Depends(get_user_repository)
+    user_service: UserService = Depends(get_user_service)
 ) -> User:
     """
-    Dependency để lấy người dùng hiện tại từ token JWT.
+    Dependency để lấy người dùng hiện tại từ token.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Không thể xác thực thông tin đăng nhập",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
     try:
-        payload = jwt.decode(
-            token, 
-            settings.JWT_SECRET_KEY, 
-            algorithms=[settings.JWT_ALGORITHM]
-        )
-        user_id: int = payload.get("sub")
-        if user_id is None:
+        token_data = verify_token(token)
+        if token_data is None:
             raise credentials_exception
-    except JWTError:
+        
+        user = await user_service.get_user(token_data.user_id)
+        if user is None:
+            raise credentials_exception
+            
+        return user
+    except PyJWTError:
         raise credentials_exception
-        
-    user = await user_repo.get_user_by_id(user_id)
-    if user is None:
-        raise credentials_exception
-        
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is disabled"
-        )
-        
-    return user
 
-async def get_current_active_superuser(
-    current_user: User = Depends(get_current_user)
+
+async def get_current_active_user(
+    current_user: User = Depends(get_current_user),
 ) -> User:
     """
-    Dependency để xác minh rằng người dùng hiện tại là superuser.
+    Dependency để lấy người dùng đang hoạt động hiện tại.
     """
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User does not have sufficient privileges"
-        )
-    return current_user 
+    if not current_user.is_active:
+        raise HTTPException(status_code=400, detail="Người dùng không hoạt động")
+    return current_user
+
+
+async def get_optional_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    user_service: UserService = Depends(get_user_service)
+) -> Optional[User]:
+    """
+    Dependency để lấy người dùng hiện tại từ token (không bắt buộc).
+    """
+    if not token:
+        return None
+        
+    try:
+        token_data = verify_token(token)
+        if token_data is None:
+            return None
+        
+        user = await user_service.get_user(token_data.user_id)
+        return user
+    except PyJWTError:
+        return None 

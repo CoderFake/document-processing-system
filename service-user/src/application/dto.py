@@ -127,9 +127,9 @@ class PermissionResponseDTO(BaseModel):
 
 class AssignRoleDTO(BaseModel):
     """DTO cho gán vai trò cho người dùng."""
-    role_id: int
+    role_id: str
 
 
 class AssignPermissionDTO(BaseModel):
     """DTO cho gán quyền cho vai trò."""
-    permission_id: int 
+    permission_id: str 

@@ -1,9 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Request, Response
+from fastapi import APIRouter, HTTPException, Depends, status, Request, Response, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from typing import Dict, Any, Optional
 import httpx
 from core.config import settings
 from utils.client import ServiceClient
+from pydantic import BaseModel
+
+class UserRegistration(BaseModel):
+    username: str
+    email: str
+    password: str
+    full_name: Optional[str] = None
 
 router = APIRouter()
 
@@ -39,22 +46,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 
 
 @router.post("/register", summary="Đăng ký người dùng mới")
-async def register(
-    username: str,
-    email: str,
-    password: str,
-    full_name: Optional[str] = None
-):
+async def register(user: UserRegistration):
     """
     Đăng ký người dùng mới.
     """
     try:
-        response = await user_service.post("/api/v1/auth/register", {
-            "username": username,
-            "email": email,
-            "password": password,
-            "full_name": full_name
-        })
+        response = await user_service.post("/api/v1/auth/register", user.model_dump())
         return response
     except HTTPException as e:
         raise e
@@ -94,7 +91,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         raise e
 
 @router.post("/refresh-token", summary="Làm mới token JWT")
-async def refresh_token(refresh_token: str):
+async def refresh_token(refresh_token: str = Body(..., embed=True)):
     """
     Làm mới token JWT bằng refresh token.
     """
@@ -112,15 +109,19 @@ async def refresh_token(refresh_token: str):
 
 
 @router.post("/logout", summary="Đăng xuất")
-async def logout(refresh_token: str):
+async def logout(refresh_token: Optional[str] = Body(None, embed=True)):
     """
     Đăng xuất người dùng.
     """
     try:
+        if not refresh_token:
+            return {"detail": "Successfully logged out"}
+            
         response = await user_service.post("/api/v1/auth/logout", {"refresh_token": refresh_token})
         return response
-    except HTTPException as e:
-        raise e
+    except Exception as e:
+        # Trong trường hợp lỗi, vẫn trả về thành công để client xóa token
+        return {"detail": "Successfully logged out"}
 
 
 @router.get("/me", summary="Lấy thông tin người dùng hiện tại")
@@ -128,4 +129,33 @@ async def get_me(current_user: Dict[str, Any] = Depends(get_current_user)):
     """
     Lấy thông tin người dùng hiện tại.
     """
-    return current_user 
+    return current_user
+
+@router.get("/stats", summary="Lấy thống kê tài liệu")
+async def get_stats():
+    """
+    Lấy thống kê số lượng các loại tài liệu trong hệ thống.
+    """
+    try:
+        response = await user_service.get("/api/v1/stats")
+        return response
+    except Exception as e:
+        return {
+            "totalDocuments": 0,
+            "pdfCount": 0,
+            "wordCount": 0,
+            "excelCount": 0
+        }
+
+@router.get("/recent-documents", summary="Lấy tài liệu gần đây")
+async def get_recent_documents(
+    limit: int = 5,
+):
+    """
+    Lấy danh sách tài liệu gần đây.
+    """
+    try:
+        response = await user_service.get("/api/v1/recent-documents", params={"limit": limit})
+        return response
+    except Exception as e:
+        return []

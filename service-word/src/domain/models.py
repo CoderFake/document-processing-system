@@ -1,67 +1,122 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, UUID4
 import uuid
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.declarative import declarative_base
 
+Base = declarative_base()
 
-class DocumentInfo(BaseModel):
-    """
-    Thông tin cơ bản về tài liệu Word.
-    """
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+class DBDocument(Base):
+    __tablename__ = "documents"
+    
+    id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
+    storage_id = Column(UUID, unique=True, index=True, nullable=False, default=uuid.uuid4)
+    document_category = Column(String, nullable=False, default="word")
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    file_size = Column(Integer, nullable=False)
+    storage_path = Column(String, nullable=False)
+    original_filename = Column(String, nullable=False)
+    doc_metadata = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user_id = Column(UUID, nullable=False)
+    
+    page_count = Column(Integer, nullable=True)
+    is_encrypted = Column(Boolean, default=False)
+
+    sheet_count = Column(Integer, nullable=True)
+
+    compression_type = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)
+
+class WordDocumentInfo:
+    id: str
     title: str
-    description: Optional[str] = ""
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: Optional[datetime] = None
+    description: Optional[str]
     file_size: int
-    file_type: str
-    original_filename: str
+    page_count: Optional[int]
     storage_path: str
-    metadata: Dict[str, Any] = {}
+    original_filename: str
+    created_at: datetime
+    updated_at: Optional[datetime]
+    doc_metadata: Dict[str, Any]
+    user_id: Optional[str]
 
-    class Config:
-        arbitrary_types_allowed = True
+    def __init__(
+        self,
+        id: str = None,
+        title: str = "",
+        description: str = "",
+        file_size: int = 0,
+        page_count: int = 0,
+        storage_path: str = "",
+        original_filename: str = "",
+        created_at: datetime = None,
+        updated_at: datetime = None,
+        doc_metadata: Dict[str, Any] = None,
+        user_id: Optional[str] = None
+    ):
+        self.id = id or str(uuid.uuid4())
+        self.title = title
+        self.description = description
+        self.file_size = file_size
+        self.page_count = page_count
+        self.storage_path = storage_path
+        self.original_filename = original_filename
+        self.created_at = created_at or datetime.now()
+        self.updated_at = updated_at
+        self.doc_metadata = doc_metadata or {}
+        self.user_id = user_id
 
-
-class TemplateInfo(BaseModel):
-    """
-    Thông tin về mẫu tài liệu Word.
-    """
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+class TemplateInfo:
+    id: str
     name: str
-    description: Optional[str] = ""
-    category: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: Optional[datetime] = None
+    description: Optional[str]
     file_size: int
-    original_filename: str
+    category: str
     storage_path: str
-    metadata: Dict[str, Any] = {}
-    data_fields: List[Dict[str, Any]] = []
-
-    class Config:
-        arbitrary_types_allowed = True
-
+    created_at: datetime
+    updated_at: Optional[datetime]
+    variables: List[str]
+    sample_data: Dict[str, Any]
+    
+    def __init__(
+        self,
+        id: str = None,
+        name: str = "",
+        description: str = "",
+        file_size: int = 0,
+        category: str = "",
+        storage_path: str = "",
+        created_at: datetime = None,
+        updated_at: datetime = None,
+        variables: List[str] = None,
+        sample_data: Dict[str, Any] = None
+    ):
+        self.id = id or str(uuid.uuid4())
+        self.name = name
+        self.description = description
+        self.file_size = file_size
+        self.category = category
+        self.storage_path = storage_path
+        self.created_at = created_at or datetime.now()
+        self.updated_at = updated_at
+        self.variables = variables or []
+        self.sample_data = sample_data or {}
 
 class BatchProcessingInfo(BaseModel):
-    """
-    Thông tin về quá trình xử lý hàng loạt.
-    """
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    template_id: str
-    status: str = "processing"  
-    created_at: datetime = Field(default_factory=datetime.now)
+    id: str
+    job_type: str
+    status: str = "processing"
+    created_at: datetime
     completed_at: Optional[datetime] = None
-    total_documents: int = 0
-    processed_documents: int = 0
-    output_format: str
-    result_file_id: Optional[str] = None
-    result_file_path: Optional[str] = None
+    template_id: Optional[str] = None
+    data_file_id: Optional[str] = None
+    result_file_ids: List[str] = []
     error_message: Optional[str] = None
-
-    class Config:
-        arbitrary_types_allowed = True
-
 
 class DocumentException(Exception):
     """

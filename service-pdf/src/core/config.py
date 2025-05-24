@@ -8,12 +8,17 @@ class Settings(BaseSettings):
     PROJECT_DESCRIPTION: str = "Dịch vụ xử lý tài liệu PDF và hình ảnh PNG"
     PROJECT_VERSION: str = "1.0.0"
 
+    API_V1_STR: str = "/api/v1"
     HOST: str = "0.0.0.0"
     PORT: int = 10003
     DEBUG_MODE: bool = os.getenv("APP_ENV", "development") == "development"
     WORKERS: int = 1
 
     ALLOWED_ORIGINS: List[str] = ["*"]
+
+    # Database settings
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/document_processing")
+    DEBUG: bool = os.getenv("APP_ENV", "development") == "development"
 
     RABBITMQ_HOST: str = os.getenv("RABBITMQ_HOST", "rabbitmq")
     RABBITMQ_PORT: int = int(os.getenv("RABBITMQ_PORT", "5672"))

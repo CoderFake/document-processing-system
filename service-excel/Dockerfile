@@ -5,6 +5,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     libffi-dev \
+    python3-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    libfreetype6-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

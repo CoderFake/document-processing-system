@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import asyncpg
 from core.config import settings
 from api.routes import router as api_router
 
@@ -11,6 +12,30 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+app.state.db_pool = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Sự kiện khi ứng dụng khởi động - Tạo DB pool."""
+    try:
+        app.state.db_pool = await asyncpg.create_pool(
+            dsn=settings.DATABASE_URL,
+            min_size=settings.DB_POOL_MIN_SIZE if hasattr(settings, 'DB_POOL_MIN_SIZE') else 1,
+            max_size=settings.DB_POOL_MAX_SIZE if hasattr(settings, 'DB_POOL_MAX_SIZE') else 10,
+            timeout=settings.DB_TIMEOUT if hasattr(settings, 'DB_TIMEOUT') else 30,
+            command_timeout=settings.DB_COMMAND_TIMEOUT if hasattr(settings, 'DB_COMMAND_TIMEOUT') else 5
+        )
+        print("Connection pool to PostgreSQL started.")
+    except Exception as e:
+        print(f"Could not connect to PostgreSQL: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Sự kiện khi ứng dụng tắt - Đóng DB pool."""
+    if app.state.db_pool:
+        await app.state.db_pool.close()
+        print("Connection pool to PostgreSQL closed.")
 
 app.add_middleware(
     CORSMiddleware,

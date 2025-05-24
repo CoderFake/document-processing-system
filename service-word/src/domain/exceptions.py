@@ -86,3 +86,13 @@ class BatchProcessingException(BaseServiceException):
             message=f"Lỗi xử lý hàng loạt: {message}",
             code="batch_processing_error"
         )
+
+class InvalidDataFormatException(BaseServiceException):
+    """
+    Ngoại lệ khi định dạng dữ liệu không hợp lệ.
+    """
+    def __init__(self, message: str):
+        super().__init__(
+            message=f"Định dạng dữ liệu không hợp lệ: {message}",
+            code="invalid_data_format"
+        )

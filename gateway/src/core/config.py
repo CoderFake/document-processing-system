@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Document Processing Gateway API"
     PROJECT_DESCRIPTION: str = "API Gateway cho hệ thống xử lý tài liệu đa định dạng"
     PROJECT_VERSION: str = "1.0.0"
+    
+    API_V1_STR: str = "/api/v1"
 
     HOST: str = "0.0.0.0"
     PORT: int = 10000

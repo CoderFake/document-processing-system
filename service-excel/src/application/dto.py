@@ -8,7 +8,34 @@ class CreateDocumentDTO(BaseModel):
     title: str
     description: Optional[str] = ""
     original_filename: str
-    metadata: Dict[str, Any] = {}
+    doc_metadata: Dict[str, Any] = {}
+    user_id: Optional[str] = None
+
+    def __init__(
+        self,
+        title: str,
+        description: str,
+        original_filename: str,
+        doc_metadata: Dict[str, Any] = None,
+        user_id: Optional[str] = None
+    ):
+        """
+        Khởi tạo DTO cho việc tạo tài liệu Excel mới.
+
+        Args:
+            title: Tiêu đề của tài liệu
+            description: Mô tả của tài liệu
+            original_filename: Tên file gốc
+            doc_metadata: Metadata của tài liệu
+            user_id: ID của người dùng tạo tài liệu
+        """
+        super().__init__(
+            title=title,
+            description=description,
+            original_filename=original_filename,
+            doc_metadata=metadata or {},
+            user_id=user_id
+        )
 
 class CreateTemplateDTO(BaseModel):
     """
@@ -19,7 +46,7 @@ class CreateTemplateDTO(BaseModel):
     category: Optional[str] = None
     original_filename: str
     data_fields: List[Dict[str, Any]] = []
-    metadata: Dict[str, Any] = {}
+    doc_metadata: Dict[str, Any] = {}
 
 class TemplateDataDTO(BaseModel):
     """
@@ -28,6 +55,7 @@ class TemplateDataDTO(BaseModel):
     template_id: str
     data: Dict[str, Any]
     output_format: str = "xlsx"  
+    user_id: Optional[str] = None
 
 class BatchProcessingDTO(BaseModel):
     """
@@ -43,6 +71,7 @@ class MergeDocumentsDTO(BaseModel):
     """
     document_ids: List[str]
     output_filename: str
+    user_id: Optional[str] = None
 
 class ConvertToWordDTO(BaseModel):
     """
